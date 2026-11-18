@@ -18,7 +18,11 @@
     "test": "vitest run tests/unit",
     "test:engine": "vitest run tests/engine --testTimeout 150000",
     "test:browser": "vitest run --config vitest.browser.config.ts",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "zip": "npm run build && npm run check:store && tsx scripts/zip.ts dist",
+    "zip:personal": "npm run build:personal && tsx scripts/zip.ts dist-personal release/frame-snap-personal-0.1.0.zip",
+    "store:assets": "tsx scripts/store-assets.ts"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.7.1",
