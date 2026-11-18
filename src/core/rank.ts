@@ -3,6 +3,7 @@
  * DOM, network and adapter results describe the same video from different
  * angles; the registry folds them into one VideoSource per id.
  */
+import { isKnownDrmHost } from "./drm";
 import type { Variant, VideoSource } from "./model";
 
 /** Highest = most likely the video the user means. */
@@ -84,5 +85,5 @@ export function mergeAll(existing: readonly VideoSource[], incoming: readonly Vi
     byId.set(id, { ...merged, id });
     for (const v of merged.variants) idByUrl.set(v.url, id);
   }
-  return [...byId.values()];
+  return [...byId.values()].map((s) => (s.protection !== "drm" && isKnownDrmHost(s.pageUrl) ? { ...s, protection: "drm" as const } : s));
 }

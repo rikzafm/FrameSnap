@@ -6,7 +6,8 @@ import { ERROR_COPY, FrameSnapError, toAppError, type AppError } from "../core/e
 import { buildFilename } from "../core/filename";
 import { formatBytes } from "../core/format";
 import type { JobPhase, JobRecord } from "../core/jobs/job";
-import type { DownloadOptions, VideoSource } from "../core/model";
+import { GIF_LOW_MEMORY_BYTES, gifWorkingSetBytes } from "../core/estimate";
+import type { DownloadOptions, GifOptions, VideoSource } from "../core/model";
 import { planDownload, type PlanWarning } from "../core/plan";
 
 export { formatBytes };
@@ -43,6 +44,13 @@ export function describeDownload(source: VideoSource, options: DownloadOptions, 
     const error = err instanceof FrameSnapError ? err.appError : toAppError(err);
     return { filename: "", warnings: [], error };
   }
+}
+
+/** Low-memory warning for the GIF tab (working set above 600 MB), or undefined when it fits. */
+export function gifMemoryWarning(opts: GifOptions, srcWidth: number, srcHeight: number): string | undefined {
+  return gifWorkingSetBytes(opts, srcWidth, srcHeight) > GIF_LOW_MEMORY_BYTES
+    ? "This GIF may use a lot of memory and could fail. Try a shorter range, a lower frame rate or a smaller width."
+    : undefined;
 }
 
 export interface QualityChoice {
