@@ -17,6 +17,7 @@ export const tabs = {
     (frameId === undefined ? chrome.tabs.sendMessage(tabId, message) : chrome.tabs.sendMessage(tabId, message, { frameId })) as Promise<T>,
   query: (q: chrome.tabs.QueryInfo) => chrome.tabs.query(q),
   get: (tabId: number) => chrome.tabs.get(tabId),
+  create: (p: chrome.tabs.CreateProperties) => chrome.tabs.create(p),
   onRemoved: chrome.tabs.onRemoved,
   onUpdated: chrome.tabs.onUpdated,
 };
@@ -41,6 +42,7 @@ export const downloads = {
   cancel: (id: number) => chrome.downloads.cancel(id),
   removeFile: (id: number) => chrome.downloads.removeFile(id),
   erase: (q: chrome.downloads.DownloadQuery) => chrome.downloads.erase(q),
+  show: (id: number) => chrome.downloads.show(id),
   onChanged: chrome.downloads.onChanged,
 };
 
@@ -73,4 +75,5 @@ export const permissions = {
   contains: (p: chrome.permissions.Permissions) => chrome.permissions.contains(p),
   request: (p: chrome.permissions.Permissions) => chrome.permissions.request(p),
   remove: (p: chrome.permissions.Permissions) => chrome.permissions.remove(p),
+  getAll: () => chrome.permissions.getAll(),
 };

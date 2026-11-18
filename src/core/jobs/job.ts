@@ -139,7 +139,7 @@ export function recoverInterrupted(jobs: readonly JobRecord[], now: number): Job
 
 /** Failed jobs the popup should offer to resume on this page. */
 export function resumableOn(jobs: readonly JobRecord[], canonicalUrl: string): JobRecord[] {
-  return jobs.filter((j) => j.status === "failed" && j.resumable && j.source.pageUrl === canonicalUrl).sort((a, b) => b.updatedAt - a.updatedAt);
+  return jobs.filter((j) => j.kind !== "gif" && j.status === "failed" && j.resumable && j.source.pageUrl === canonicalUrl).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export type ResumeDecision =

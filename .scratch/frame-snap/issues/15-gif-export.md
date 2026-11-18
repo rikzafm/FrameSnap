@@ -33,4 +33,4 @@ Not verified or open
 - The strip shows the poster, not real frames; the popup cannot read the page's video.
 - A pending preview lives in the service worker's memory: if the worker restarts, a reopened popup no longer lists it. A progressive file is fetched whole before trimming.
 - When a rendition's width is unknown, "Original" assumes 1280 px wide.
-- Resuming an interrupted GIF job is ticket 10's; the record carries `kind: "gif"` and the GIF options.
+- A failed GIF is retried from the popup (Retry), not resumed: GIF jobs are excluded from the resume banner and their chunks are dropped on failure.
