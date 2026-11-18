@@ -6,6 +6,6 @@
 import { installMseHook } from "./mse-hook";
 import { createMsePort, type MsePort } from "./mse-protocol";
 
-let port: MsePort | undefined;
-const store = installMseHook(window as never, { onChange: (info) => port?.notify(info) });
-port = createMsePort(window, store);
+const ref: { port?: MsePort } = {};
+const store = installMseHook(window as never, { onChange: (info) => ref.port?.notify(info) });
+ref.port = createMsePort(window, store);
