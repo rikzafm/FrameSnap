@@ -26,6 +26,14 @@ export const storage = {
   onChanged: chrome.storage.onChanged,
 };
 
+export const session = {
+  area: chrome.storage.session,
+};
+
+export const webRequest = {
+  onHeadersReceived: chrome.webRequest.onHeadersReceived,
+};
+
 export const downloads = {
   download: (options: chrome.downloads.DownloadOptions) => chrome.downloads.download(options),
   search: (q: chrome.downloads.DownloadQuery) => chrome.downloads.search(q),
