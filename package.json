@@ -14,7 +14,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run tests/unit",
+    "test:engine": "vitest run tests/engine --testTimeout 150000",
+    "test:browser": "vitest run --config vitest.browser.config.ts",
     "test:watch": "vitest"
   },
   "devDependencies": {
@@ -23,14 +25,21 @@
     "@resvg/resvg-js": "^2.6.2",
     "@types/chrome": "^0.3.7",
     "@types/node": "^22.20.5",
+    "@vitest/browser": "^3.2.7",
     "eslint": "^10.15.0",
     "eslint-config-prettier": "^10.1.8",
     "jsdom": "^31.0.1",
+    "playwright": "^1.65.1",
     "prettier": "^3.10.1",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.73.0",
     "vite": "^7.3.8",
     "vitest": "^3.2.7"
+  },
+  "dependencies": {
+    "@ffmpeg/core": "^0.12.10",
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "@ffmpeg/util": "^0.12.2"
   }
 }
