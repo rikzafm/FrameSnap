@@ -16,6 +16,8 @@ const WARNING_TEXT: Record<PlanWarning, string> = {
   "large-file": "This is a large file. Make sure you have the disk space.",
   "too-large": ERROR_COPY["too-large"].message,
   "assumed-codecs": "Codecs could not be read, so the output may need extra conversion.",
+  "capture-recorder": "This video has no download link, so it is recorded in real time. Keep it playing and this tab open. A recording cannot be resumed if it stops.",
+  "capture-mse": "This video has no download link, so Frame Snap saves what the page has buffered so far. A capture cannot be resumed if it stops.",
 };
 
 export interface DownloadWarning {
