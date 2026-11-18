@@ -23,6 +23,15 @@ export function createModeMemory(area: ModeArea) {
     return typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Record<string, string>) : {};
   };
   return {
+    /** Remembered mode per host. */
+    async all(): Promise<Record<string, Mode>> {
+      return Object.fromEntries(Object.entries(await load()).filter(([, m]) => MODES.includes(m))) as Record<string, Mode>;
+    },
+    async remove(host: string): Promise<void> {
+      const { [host]: _gone, ...rest } = await load();
+      void _gone;
+      await area.set({ [MODE_KEY]: rest });
+    },
     async get(url: string): Promise<Mode> {
       const k = siteKey(url);
       const m = k ? (await load())[k] : undefined;

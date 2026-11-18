@@ -288,6 +288,33 @@ describe("screenshot tab", () => {
   });
 });
 
+describe("settings defaults", () => {
+  it("starts Quality and Audio from the saved defaults", () => {
+    const src = source("a", "Cat clip");
+    src.variants.push({ ...src.variants[0]!, id: "a-360", height: 360 });
+    make({ defaults: { format: "mp4", filenameTemplate: "{title}", quality: "h360", audio: "remove" } }).handle({ t: "media/updated", tabId: 5, sources: [src] });
+    byText("button", "Download")!.click();
+    expect(posted.at(-1)).toMatchObject({ t: "job/download", options: { quality: "a-360", audio: "remove" } });
+  });
+});
+
+describe("first-run notice", () => {
+  it("shows the notice until acknowledged, then reports the acknowledgement", async () => {
+    const ack = vi.fn();
+    make({ firstRun: { onAcknowledge: ack } }).handle({ t: "media/updated", tabId: 5, sources: [] });
+    expect(q(".first-run")!.textContent).toContain("Only save content you have the right to use.");
+    expect(await axeViolations()).toEqual([]);
+    byText("button", "Got it")!.click();
+    expect(ack).toHaveBeenCalledOnce();
+    expect(q(".first-run")).toBeNull();
+  });
+
+  it("is absent when no first-run handler is given", () => {
+    make().handle({ t: "media/updated", tabId: 5, sources: [] });
+    expect(q(".first-run")).toBeNull();
+  });
+});
+
 describe("mode memory", () => {
   it("remembers the mode per site", async () => {
     const data: Record<string, unknown> = {};
