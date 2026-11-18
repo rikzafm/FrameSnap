@@ -19,6 +19,11 @@ describe('docs/store/permissions.md', () => {
     }
   });
 
+  it('does not present `commands` as a permission', () => {
+    expect(doc).not.toMatch(/^- `commands`/m);
+    expect(doc).toMatch(/manifest key/i);
+  });
+
   it('says that resumable partial media is kept on the device for 7 days under storage', () => {
     expect(doc).toMatch(/`storage`[^\n]*(resum|partial)[^\n]*7 days/i);
   });

@@ -6,6 +6,7 @@ import { PICKER_SELECTION_KEY } from "../core/picker-selection";
 import { SNAP_PREFS_KEY, normalizeSnapOptions } from "../core/snap";
 import { JOB_PREFIX } from "../background/job-store";
 import { permissions, runtime, scripting, storage, tabs } from "../platform/chrome";
+import { manifest } from "../platform/extension";
 import { connectWithReconnect, popupPortName } from "../platform/ports";
 import { settingsStore } from "../platform/settings-store";
 import { originPattern, requestSiteAccess } from "../platform/site-access";
@@ -35,8 +36,7 @@ async function boot() {
   const siteDeps = {
     permissions,
     injectContent: async (id: number) => {
-      const files = chrome.runtime.getManifest().content_scripts?.[0]?.js ?? [];
-      await scripting.executeScript({ target: { tabId: id, allFrames: true }, files });
+      await scripting.executeScript({ target: { tabId: id, allFrames: true }, files: manifest.contentScriptFiles() });
     },
   };
 

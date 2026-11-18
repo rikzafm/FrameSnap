@@ -24,6 +24,8 @@ export interface EngineLifecycleOptions {
 export interface EngineLifecycle {
   /** Resolves once the offscreen document exists. Safe to call concurrently. */
   ensure(): Promise<void>;
+  /** Is the offscreen document there right now? (Does not create it.) */
+  exists(): Promise<boolean>;
   jobStarted(jobId: string): void;
   jobFinished(jobId: string): void;
 }
@@ -64,6 +66,7 @@ export function createEngineLifecycle(opts: EngineLifecycleOptions): EngineLifec
       })();
       return creating;
     },
+    exists: () => api.has(),
     jobStarted(jobId) {
       active.add(jobId);
       cancelIdle();

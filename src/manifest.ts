@@ -91,7 +91,6 @@ export function buildManifest({ youtube }: ManifestOptions) {
       'webRequest',
       'offscreen',
       'clipboardWrite',
-      'commands',
       'alarms',
       'declarativeNetRequestWithHostAccess',
     ],

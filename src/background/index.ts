@@ -1,20 +1,24 @@
 import { isEngineToWorker } from "../core/engine-messages";
 import { PICKER_SELECTION_KEY } from "../core/picker-selection";
-import { isContentToWorker, isPopupToWorker, type WorkerToPopup } from "../core/messages";
+import { toAppError } from "../core/errors";
+import { isContentToWorker, isPopupToWorker, type ContentToWorker, type JobEvent, type WorkerToPopup } from "../core/messages";
 import type { JobRecord } from "../core/jobs/job";
-import type { DownloadOptions, VideoSource } from "../core/model";
+import type { VideoSource } from "../core/model";
 import { parseMaster, parseMedia } from "../core/media/hls";
 import { parseMpd } from "../core/media/dash";
 import { ENGINE_PORT, parsePopupPortName } from "../platform/ports";
 import { alarms, downloads, dnr, offscreen, permissions, runtime, scripting, session, storage, tabs, webRequest } from "../platform/chrome";
 import mseHookFile from "../main-world/mse-main?script";
+import { lifecycle as lifecycleEvents, manifest } from "../platform/extension";
 import { grantedOptionalOrigins, syncMseScripts } from "../platform/mse-scripts";
 import { resolveDefaultQuality } from "../core/settings";
 import { settingsStore } from "../platform/settings-store";
 import { createDownloadOrchestrator } from "./download";
 import { createEngineLifecycle } from "./engine-lifecycle";
 import { createEngineLink } from "./engine-link";
+import { fetchText } from "./fetch-text";
 import { createHistoryStore } from "./history";
+import { createJobCommands } from "./popup-commands";
 import { createJobStore, jobKey } from "./job-store";
 import { createMediaService } from "./media-service";
 import { createTabRegistry } from "./registry";
@@ -22,7 +26,8 @@ import { createSniffer } from "./sniffer";
 import { routeContentMessage, routePopupMessage } from "./router";
 import { createChromeSnapService, handlePopupSnap, isSnapContentMessage, listenForSnapCommand } from "./snap-wire";
 
-const snap = createChromeSnapService(createTabRegistry(session.area));
+const registry = createTabRegistry(session.area);
+const snap = createChromeSnapService(registry);
 listenForSnapCommand(snap);
 
 /** Read-only lookup of a saved job's source reference. */
@@ -31,9 +36,9 @@ async function resumeRef(jobId: string) {
   return (got[jobKey(jobId)] as JobRecord | undefined)?.source;
 }
 
-export { PICKER_SELECTION_KEY };
-
-const registry = createTabRegistry(session.area);
+/** Leave a video selected for the popup to take when it opens (the in-page picker's hand-off). */
+const selectInPopup = (tabId: number, sourceId: string, tab: "list" | "gif") =>
+  storage.local.set({ [PICKER_SELECTION_KEY]: { tabId, sourceId, tab } });
 
 const jobStore = createJobStore({ area: storage.local });
 
@@ -47,11 +52,7 @@ const media = createMediaService({
     return isContentToWorker(res) && res.t === "dom/report" ? res.sources : undefined;
   },
   adapterContext: {
-    fetchText: async (url, headers) => {
-      const res = await fetch(url, headers ? { headers } : undefined);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.text();
-    },
+    fetchText: (url, headers) => fetchText(fetch, url, headers),
     parseMaster,
     parseMedia,
     parseMpd,
@@ -71,6 +72,8 @@ const broadcast = (m: WorkerToPopup) => {
   }
 };
 
+const emitJob = (event: JobEvent) => broadcast({ t: "job/event", event });
+
 const lifecycle = createEngineLifecycle({ api: offscreen, url: "src/offscreen/index.html" });
 const engineLink = createEngineLink({ ensure: () => lifecycle.ensure() });
 const history = createHistoryStore(storage.local);
@@ -87,7 +90,7 @@ const orchestrator = createDownloadOrchestrator({
   capture: { send: (tabId, frameId, msg) => tabs.sendMessage(tabId, msg, frameId).then(() => undefined) },
   lookupSource: async (tabId, sourceId) => (await registry.list(tabId)).find((s) => s.id === sourceId),
   history,
-  emit: (event) => broadcast({ t: "job/event", event }),
+  emit: emitJob,
   listSources: (tabId) => registry.list(tabId),
   tabUrl: async (tabId) => (await tabs.get(tabId).catch(() => undefined))?.url,
   openTab: async (url) => (await tabs.create({ url, active: true })).id ?? -1,
@@ -95,10 +98,16 @@ const orchestrator = createDownloadOrchestrator({
 
 downloads.onChanged.addListener((delta) => orchestrator.onDownloadChanged(delta));
 
+const jobCommands = createJobCommands({
+  orchestrator,
+  settings: () => settingsStore().get(),
+  emit: emitJob,
+});
+
 // MSE capture hook: registered at document_start only for sites the user granted at runtime.
 async function syncMseHook(): Promise<void> {
   const granted = (await permissions.getAll()).origins ?? [];
-  const builtIn = chrome.runtime.getManifest().host_permissions ?? [];
+  const builtIn = manifest.hostPermissions();
   await syncMseScripts(
     {
       getRegistered: (filter) => scripting.getRegisteredContentScripts(filter),
@@ -127,8 +136,8 @@ void (async () => {
 })().catch(() => undefined);
 
 // First run: the options page opens with the use notice and privacy summary.
-chrome.runtime.onInstalled.addListener((details) => {
-  if (details.reason === "install") void chrome.runtime.openOptionsPage().catch(() => undefined);
+lifecycleEvents.onInstalled((reason) => {
+  if (reason === "install") void lifecycleEvents.openOptionsPage().catch(() => undefined);
 });
 
 /** Prefer the registry's copy (manifests expanded) over the picker's snapshot. */
@@ -181,33 +190,7 @@ runtime.onConnect.addListener((port) => {
       return;
     }
     if (handlePopupSnap(snap, raw)) return;
-    if (raw.t === "job/download") {
-      void orchestrator.download({ tabId: raw.tabId, sourceId: raw.sourceId, options: raw.options as DownloadOptions }).catch(() => undefined);
-      return;
-    }
-    if (raw.t === "job/gif") {
-      void settingsStore()
-        .get()
-        .then((settings) => orchestrator.startGif({ tabId: raw.tabId, sourceId: raw.sourceId, options: raw.options, filenameTemplate: settings.filenameTemplate }))
-        .catch(() => undefined);
-      return;
-    }
-    if (raw.t === "job/save") {
-      void orchestrator.saveGif(raw.jobId).catch(() => undefined);
-      return;
-    }
-    if (raw.t === "job/resume") {
-      void orchestrator.resume(raw.jobId, raw.tabId).catch(() => undefined);
-      return;
-    }
-    if (raw.t === "job/discard") {
-      void orchestrator.discard(raw.jobId).catch(() => undefined);
-      return;
-    }
-    if (raw.t === "job/cancel") {
-      void orchestrator.cancel(raw.jobId).catch(() => undefined);
-      return;
-    }
+    if (jobCommands.handle(raw)) return;
     void routePopupMessage(raw, { sendToTab: (tabId, m) => tabs.sendMessage(tabId, m), resumeRef })
       .then((reply) => {
         if (reply) port.postMessage(reply);
@@ -218,34 +201,41 @@ runtime.onConnect.addListener((port) => {
 
 runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
   if (!isContentToWorker(raw) || sender.tab?.id === undefined) return false;
-  if (raw.t === "dom/report") {
-    void media.onDomReport(sender.tab.id, sender.frameId ?? 0, raw.sources).catch(() => undefined);
-    return false;
-  }
-  if (raw.t === "capture/progress" || raw.t === "capture/result" || raw.t === "capture/error") {
-    void orchestrator.onCaptureMessage(raw).catch(() => undefined);
-    return false;
-  }
-  if (raw.t === "net/tap") {
-    void media.onTap(sender.tab.id, raw.payload).catch(() => undefined);
+  const tabId = sender.tab.id;
+  const frameId = sender.frameId ?? 0;
+  // fire-and-forget reports from the page
+  const reports: { [T in ContentToWorker["t"]]?: (m: Extract<ContentToWorker, { t: T }>) => Promise<unknown> } = {
+    "dom/report": (m) => media.onDomReport(tabId, frameId, m.sources),
+    "capture/progress": (m) => orchestrator.onCaptureMessage(m),
+    "capture/result": (m) => orchestrator.onCaptureMessage(m),
+    "capture/error": (m) => orchestrator.onCaptureMessage(m),
+    "net/tap": (m) => media.onTap(tabId, m.payload),
+  };
+  const report = reports[raw.t] as ((m: ContentToWorker) => Promise<unknown>) | undefined;
+  if (report) {
+    void report(raw).catch(() => undefined);
     return false;
   }
   if (raw.t !== "picker/picked" && raw.t !== "picker/action" && !isSnapContentMessage(raw)) return false;
-  const from = { tabId: sender.tab.id, frameId: sender.frameId ?? 0 };
-  void routeContentMessage(raw, from, {
+  void routeContentMessage(raw, { tabId, frameId }, {
     resumeRef,
     resumePicked: (jobId, tabId, source) => orchestrator.resumePicked(jobId, tabId, source),
     onPicked: async (tabId, source) => {
-      await storage.local.set({ [PICKER_SELECTION_KEY]: { tabId, sourceId: source.id, tab: "list" } });
+      await selectInPopup(tabId, source.id, "list");
     },
     onSnapData: (tabId, msg) => snap.onData(tabId, msg),
     onSnapTainted: (tabId, msg) => snap.onTainted(tabId, msg),
     onAction: async (action, tabId, source) => {
       if (action === "snap") return snap.frame(tabId, { source });
-      if (action === "download") return startPickedDownload(tabId, source);
+      if (action === "download") {
+        // a throw would vanish here: show it as a failed job instead
+        return startPickedDownload(tabId, source).catch((err: unknown) =>
+          emitJob({ t: "failed", jobId: crypto.randomUUID(), error: toAppError(err), resumable: false, keptRatio: 0 }),
+        );
+      }
       if (action !== "gif") return;
-      await storage.local.set({ [PICKER_SELECTION_KEY]: { tabId, sourceId: source.id, tab: "gif" } });
-      await chrome.action.openPopup().catch(() => undefined);
+      await selectInPopup(tabId, source.id, "gif");
+      await lifecycleEvents.openPopup().catch(() => undefined);
     },
   })
     .then((res) => sendResponse(res))

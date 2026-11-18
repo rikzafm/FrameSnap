@@ -65,6 +65,8 @@ describe("download orchestrator: direct route", () => {
       { header: "Origin", operation: "set", value: "https://p.test" },
     ]);
     expect(rule!.condition.requestDomains).toEqual(["cdn.test"]);
+    // only requests that belong to no tab (offscreen document, service worker, downloads), never a page the user has open
+    expect(rule!.condition.tabIds).toEqual([-1]);
     h.complete(1);
     await h.finished(jobId);
     expect(h.rules.size).toBe(0);

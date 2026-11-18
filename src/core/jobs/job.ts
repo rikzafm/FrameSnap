@@ -8,6 +8,7 @@
  *                      └─► cancelled
  */
 import { appError, type AppError } from "../errors";
+import type { Seek } from "../ffmpeg-args";
 import type { DownloadOptions, GifOptions } from "../model";
 import type { DownloadPlan } from "../plan";
 import { layoutHash, type TrackPlan } from "./chunks";
@@ -43,6 +44,10 @@ export interface JobRecord {
   resumable: boolean;
   error?: AppError;
   downloadId?: number;
+  /** The session header rule this job holds, so a restarted service worker can tell live rules from stale ones. */
+  ruleId?: number;
+  /** ffmpeg seeks per input (null = none); JSON has no undefined. A restarted service worker needs them to finish the job. */
+  seeks?: (Seek | null)[];
 }
 
 export function newJob(init: {
@@ -123,6 +128,13 @@ export function finish(job: JobRecord, downloadId: number, now: number): JobReco
 
 export function cancel(job: JobRecord, now: number): JobRecord {
   return { ...job, status: "cancelled", resumable: false, updatedAt: now };
+}
+
+/** Fraction of a job's chunks that are already fetched (the "62 % kept" label). */
+export function keptRatio(j: JobRecord | undefined): number {
+  if (!j) return 0;
+  const total = j.tracks.reduce((s, t) => s + t.keys.length, 0);
+  return total ? j.tracks.reduce((s, t) => s + t.committed.length, 0) / total : 0;
 }
 
 export function fetchComplete(job: JobRecord): boolean {

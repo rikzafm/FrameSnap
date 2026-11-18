@@ -57,7 +57,7 @@ function track(url: string, size: number): TrackPlan {
   };
 }
 
-function setup(opfs: ChunkStore = new MemoryChunkStore()) {
+function setup(opfs: ChunkStore = new MemoryChunkStore(), gate?: Promise<void>) {
   const sent: EngineToWorker[] = [];
   const cdn = new FakeCdn();
   const backend = new FakeBackend();
@@ -68,7 +68,7 @@ function setup(opfs: ChunkStore = new MemoryChunkStore()) {
     opfs: () => opfs,
     memory: new MemoryChunkStore(),
     engine: new Engine(backend),
-    http: cdn.http,
+    http: (url, init) => (gate ? gate.then(() => cdn.http(url, init)) : cdn.http(url, init)),
     blobUrls: {
       create: (b) => {
         const u = `blob:test/${urls.size}`;
@@ -123,6 +123,23 @@ describe('engine host', () => {
       t: 'engine/ready',
       storage: { usage: 10, quota: 1000, persisted: true },
     });
+  });
+
+  it('answers a status request with the jobs it is still fetching', async () => {
+    let release!: () => void;
+    const { host, cdn, of } = setup(new MemoryChunkStore(), new Promise<void>((r) => (release = r)));
+    cdn.put('/v.mp4', { body: bytes(200 * KB), etag: '"e"' });
+    await host.handle({ t: 'engine/status' });
+    expect(of('engine/running').at(-1)).toEqual({ t: 'engine/running', jobs: [] });
+
+    const fetching = host.handle({ t: 'engine/fetch', jobId: 'live', tracks: [track('https://cdn.test/v.mp4', 200 * KB)] });
+    await host.handle({ t: 'engine/status' });
+    expect(of('engine/running').at(-1)).toEqual({ t: 'engine/running', jobs: [{ jobId: 'live', phase: 'fetch' }] });
+
+    release();
+    await fetching;
+    await host.handle({ t: 'engine/status' });
+    expect(of('engine/running').at(-1)).toEqual({ t: 'engine/running', jobs: [] });
   });
 
   it('fetches into the store, reporting each commit and progress, resumable', async () => {

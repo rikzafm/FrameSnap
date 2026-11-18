@@ -46,4 +46,21 @@ Not run or open
 - The README steps were exercised as the harness does them (fresh profile, built `dist/`, personal build too), but clicking through `chrome://extensions` Load unpacked was not done by hand.
 - Found while testing, documented in known limitations and not changed: the first page opened right after install is not seen by the webRequest sniffer (a reload is), and a generic page with signed URLs and no duration cannot be re-matched on resume (the popup asks the user to pick the video again).
 - In a hidden tab Chrome stalls frame reads, so the snap test brings the page to the front first (the real popup does not hide the page).
-- No CI workflow was added.
+- CI workflow: added in the review fixes below.
+
+## Review fixes
+
+Spec findings
+1. Fixed. A SW restart no longer clobbers live jobs: `recover()` asks the offscreen host (`engine/status` -> `engine/running`) what it still runs and adopts those jobs (record stays `running`, events carry on). The rest become resumable failures; if the host cannot be asked they fail as before, which is safe because the host aborts an older run of a job id when a resume starts it. Adopted jobs need the ffmpeg seeks and the rule id, so `JobRecord` now stores `seeks` and `ruleId`. GIF jobs are not adopted (their preview blob and size facts do not survive the worker). Tests: `engine-host`, `resume-wiring`.
+2. Fixed. `recover()` removes every session rule not owned by an adopted job, and rules carry `tabIds: [-1]` (requests no tab made: offscreen document, service worker, downloads), so they never touch an open page.
+3. Fixed. `src/background/popup-commands.ts` is one table and one error path: a throwing download/gif/save/resume/discard/cancel emits a `failed` job event (under the job's own id when it has one). The picker's Download action does the same.
+4. Fixed in part. `runResume` now emits `resume-needs-pick` (job stays resumable) instead of throwing `not-found`; this branch is defensive because `runResume` is only called with a found match, so it has no test. `resumeJob` and `resumePicked` compare the tab to the canonical job page (a pick from a tab on another page now fails resumable instead of continuing).
+5. Fixed. `commands` removed from `permissions` (the manifest key stays); `docs/store/permissions.md` and its tests updated. The `<all_urls>` content script and `clipboardWrite` are kept (tickets 01, 04, 16) and justified in permissions.md.
+6. Fixed. `.github/workflows/ci.yml` runs typecheck, lint, test, test:engine, both builds and check:store. The browser and e2e suites are not in CI (they need Chromium installs).
+7. Fixed. The shortcut snaps the tab's best-ranked video with a page element, once (`bestSource`); it broadcasts only when no video element is known.
+8. Fixed the ticket 12 Answer. `tests/e2e/resume.test.ts` covers an expired signature failing at about 44 %, reload and resume (only missing bytes, identical hash), a changed ETag restarting, and a browser relaunch after a failure. Missing: a real kill (SW or browser killed while the fetch runs) and the adopt-after-SW-restart path in real Chrome; both are covered only at the orchestrator seam.
+
+Standards findings
+9. Fixed. `.agents/` is in `.gitignore`; CLAUDE.md and AGENTS.md now list `.agent/` and `.agents/`.
+10. Fixed. New `src/platform/extension.ts` (no `chrome.*` access at import, so content scripts can load it, which `platform/chrome.ts` cannot) wraps the calls in content, bridge, popup, options, the SW entry and `snap-wire.ts` (`captureVisibleTab`, `commands`). `src/offscreen/main.ts` is left as documented.
+11. Mostly fixed: one `createTabRegistry`; `adapterContext.fetchText` shares `src/background/fetch-text.ts` with the orchestrator; the two `hostOf` are `hostnameOf` (download.ts) and `originLabel` (options); one `selectInPopup` helper; stray `PICKER_SELECTION_KEY` export removed; redundant casts dropped (the DNR enum casts stay, they are needed outside Chrome); the Q7 comment is spelled out; `keptRatio` lives in `core/jobs/job.ts`; the page-report `raw.t` ladder is a table. Skipped: splitting `createDownloadOrchestrator` into modules (its state is shared through one closure, so a split is a refactor of its own).

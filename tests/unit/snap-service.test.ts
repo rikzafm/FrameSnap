@@ -62,6 +62,20 @@ describe('snap requests', () => {
     expect(sent).toEqual([{ tabId: 9, msg: { t: 'snap/capture', options: DEFAULT_SNAP_OPTIONS } }]);
   });
 
+  it('targets only the best video of the tab when none is named, so one shortcut saves one file', async () => {
+    const { svc, sent } = make({ bestSource: async () => source() });
+    await svc.frame(9, {});
+    expect(sent).toEqual([
+      { tabId: 9, frameId: 3, msg: { t: 'snap/capture', elementKey: 'e7', options: DEFAULT_SNAP_OPTIONS } },
+    ]);
+  });
+
+  it('broadcasts only when the tab has no known video element', async () => {
+    const { svc, sent } = make({ bestSource: async () => undefined });
+    await svc.frame(9, {});
+    expect(sent).toEqual([{ tabId: 9, msg: { t: 'snap/capture', options: DEFAULT_SNAP_OPTIONS } }]);
+  });
+
   it('uses options from the popup when given', async () => {
     const { svc, sent } = make();
     const options = { ...DEFAULT_SNAP_OPTIONS, format: 'webp' as const };

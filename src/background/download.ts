@@ -26,6 +26,7 @@ import {
   fail as failRecord,
   fetchComplete,
   finish,
+  keptRatio,
   newJob,
   recoverInterrupted,
   start as startRecord,
@@ -42,6 +43,7 @@ import { gifSourceSize, pickGifVariant } from "../core/gif";
 import type { DownloadOptions, GifOptions, Variant, VideoSource } from "../core/model";
 import { planDownload, type DownloadPlan, type PlanInput } from "../core/plan";
 import type { EngineLifecycle } from "./engine-lifecycle";
+import { fetchText as fetchTextWith } from "./fetch-text";
 import type { JobStore } from "./job-store";
 
 export interface Fetcher {
@@ -111,6 +113,8 @@ export interface DownloadDeps {
   openTab?(url: string): Promise<number>;
   /** How long resume waits for the registry to settle on the tab (default 5 s). */
   settleMs?: number;
+  /** How long `recover` waits for the offscreen document to report its running jobs (default 5 s). */
+  statusTimeoutMs?: number;
   sleep?(ms: number): Promise<void>;
   now?: () => number;
   newId?: () => string;
@@ -145,7 +149,10 @@ export interface DownloadOrchestrator {
   resumePicked(jobId: string, tabId: number, source: VideoSource): Promise<void>;
   /** Drop a job's chunks and record. */
   discard(jobId: string): Promise<void>;
-  /** Service-worker start: jobs left queued or running become resumable failures. */
+  /**
+   * Service-worker start: jobs the offscreen document still runs are adopted (fetches outlive the
+   * worker); other jobs left queued or running become resumable failures. Stale header rules go.
+   */
   recover(): Promise<void>;
   /** Chunk-store housekeeping (7-day expiry, orphans, cap). Resolves once the engine reported. */
   sweep(nowMs?: number): Promise<void>;
@@ -154,7 +161,11 @@ export interface DownloadOrchestrator {
 const POLL_MS = 250;
 
 const MAX_DIRECT_RESUMES = 3;
-const RULE_TYPES: chrome.declarativeNetRequest.ResourceType[] = ["xmlhttprequest", "media", "other"] as chrome.declarativeNetRequest.ResourceType[];
+/** chrome.tabs.TAB_ID_NONE: requests that no tab made. */
+const NO_TAB = -1;
+/** How long a restarted service worker waits for the offscreen document to say what it is running. */
+const STATUS_TIMEOUT_MS = 5000;
+const RULE_TYPES = ["xmlhttprequest", "media", "other"] as chrome.declarativeNetRequest.ResourceType[];
 
 interface Active {
   id: string;
@@ -183,7 +194,7 @@ interface Active {
   gifReady: boolean;
 }
 
-const hostOf = (url: string): string | undefined => {
+const hostnameOf = (url: string): string | undefined => {
   try {
     return new URL(url).hostname;
   } catch {
@@ -191,7 +202,10 @@ const hostOf = (url: string): string | undefined => {
   }
 };
 
-const isAppError = (x: unknown): x is AppError =>
+/** `runResume` could not identify the video again. */
+class NeedsPick extends Error {}
+
+const isAppError =(x: unknown): x is AppError =>
   typeof x === "object" && x !== null && !(x instanceof Error) && typeof (x as AppError).code === "string" && typeof (x as AppError).retryable === "boolean";
 
 function downloadError(code: string | undefined): AppError {
@@ -223,6 +237,7 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
   /** Where each capture job's page side lives, so a late result for a dropped job can still be freed. */
   const captureHomes = new Map<string, { tabId: number; frameId: number }>();
   const sweepWaiters: ((jobIds: string[]) => void)[] = [];
+  const statusWaiters: ((jobs: { jobId: string; phase: "fetch" | "engine" }[]) => void)[] = [];
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const sameCanonical = (want: string) => (url: string | undefined) => {
     try {
@@ -241,22 +256,18 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     return next;
   }
 
-  const keptRatio = (j: JobRecord | undefined): number => {
-    if (!j) return 0;
-    const total = j.tracks.reduce((s, t) => s + t.keys.length, 0);
-    return total ? j.tracks.reduce((s, t) => s + t.committed.length, 0) / total : 0;
-  };
-
-  // ---- request header rules (Q7) -------------------------------------------------
+  // ---- request header rules (spec Q7: Referer/Origin through declarativeNetRequest session rules, per job) ----
 
   async function setRules(a: Active, urls: readonly string[]): Promise<void> {
     const headers = a.source.headers;
     if (!headers || Object.keys(headers).length === 0) return;
-    const domains = [...new Set(urls.map(hostOf).filter((h): h is string => h !== undefined))];
+    const domains = [...new Set(urls.map(hostnameOf).filter((h): h is string => h !== undefined))];
     const run = rulesChain.then(async () => {
+      const fresh = a.ruleId === undefined;
       if (a.ruleId === undefined) a.ruleId = Math.max(0, ...(await dnr.getSessionRules()).map((r) => r.id)) + 1;
+      const id = a.ruleId;
       const rule: chrome.declarativeNetRequest.Rule = {
-        id: a.ruleId,
+        id,
         priority: 1,
         action: {
           type: "modifyHeaders" as chrome.declarativeNetRequest.RuleActionType,
@@ -266,12 +277,26 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
             value,
           })),
         },
-        condition: { requestDomains: domains, resourceTypes: RULE_TYPES },
+        // Fetches run in the offscreen document, the service worker or chrome.downloads, none of which
+        // belongs to a tab. Matching only tab -1 keeps the rule off every page the user has open.
+        condition: { requestDomains: domains, resourceTypes: RULE_TYPES, tabIds: [NO_TAB] },
       };
-      await dnr.updateSessionRules({ removeRuleIds: [a.ruleId], addRules: [rule] });
+      await dnr.updateSessionRules({ removeRuleIds: [id], addRules: [rule] });
+      // remembered on the record: after a service-worker restart this is how a live rule is told from a stale one
+      if (fresh) await update(a.id, (j) => ({ ...j, ruleId: id }));
     });
     rulesChain = run.catch(() => undefined);
     await run;
+  }
+
+  /** Service-worker start: session rules outlive the worker, so drop every one that no live job owns. */
+  async function clearStaleRules(keep: ReadonlySet<number>): Promise<void> {
+    const run = rulesChain.then(async () => {
+      const stale = (await dnr.getSessionRules()).map((r) => r.id).filter((id) => !keep.has(id));
+      if (stale.length > 0) await dnr.updateSessionRules({ removeRuleIds: stale });
+    });
+    rulesChain = run.catch(() => undefined);
+    await run.catch(() => undefined);
   }
 
   async function clearRules(a: Active): Promise<void> {
@@ -287,11 +312,7 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
 
   const headersFor = (a: Active, extra: Record<string, string> = {}) => ({ ...(a.source.headers ?? {}), ...extra });
 
-  async function fetchText(a: Active, url: string): Promise<string> {
-    const res = await deps.fetch(url, { headers: headersFor(a), signal: a.ac.signal });
-    if (!res.ok) throw httpError(res.status);
-    return res.text();
-  }
+  const fetchText = (a: Active, url: string) => fetchTextWith(deps.fetch, url, headersFor(a), a.ac.signal);
 
   /** `Range: bytes=0-0` tells size and Range support in one request; HEAD is the fallback. */
   async function probe(a: Active, url: string): Promise<ProbeResult> {
@@ -509,11 +530,14 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     // the manifests know the real container (a plan input from a manifest only says "unknown")
     a.plan = { ...a.plan, inputs: a.plan.inputs.map((input, i) => ({ ...input, container: built.tracks[i]!.container })) };
     const withValidators = built.tracks.map((plan, i) => ({ plan, validators: trackValidators(plan, resolved[i]!.http) }));
-    return { tracks: built.tracks as TrackPlan[], seeks: built.seeks, withValidators };
+    return { tracks: built.tracks, seeks: built.seeks, withValidators };
   }
 
   async function dispatchFetch(a: Active, p: Prepared, fresh: boolean): Promise<void> {
     a.seeks = p.seeks;
+    // kept on the record for a service worker that restarts while the offscreen document is still fetching
+    const seeks = p.seeks.map((s) => s ?? null);
+    await update(a.id, (j) => ({ ...j, seeks }));
     await setRules(a, [...a.plan.inputs.map((i) => i.url), ...p.tracks.flatMap((t) => t.chunks.map((c) => c.url))]);
     a.ac.signal.throwIfAborted();
     a.busy = "fetch";
@@ -536,7 +560,7 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     lifecycle.jobStarted(a.id);
     const p = await prepareTracks(a);
     const decision = decideResume(job, match, p.withValidators);
-    if (decision.action === "pick") throw new FrameSnapError("not-found");
+    if (decision.action === "pick") throw new NeedsPick();
     const keep = decision.action === "continue" ? decision.keep : undefined;
     if (decision.action === "restart") deps.emit({ t: "notice", jobId: a.id, code: decision.reason });
     const plan = a.plan;
@@ -620,6 +644,10 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     if (m.t === "engine/ready") return;
     if (m.t === "engine/swept") {
       for (const done of sweepWaiters.splice(0)) done(m.jobIds);
+      return;
+    }
+    if (m.t === "engine/running") {
+      for (const done of statusWaiters.splice(0)) done(m.jobs);
       return;
     }
     const a = active.get(m.jobId);
@@ -777,8 +805,26 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
       await runResume(a, job, { status: "found", source, variant, via: "id" });
     } catch (err) {
       if (a.cancelling) return;
+      if (err instanceof NeedsPick) {
+        // spec 6.6 step 4: the video could not be identified, so the user picks it; the record stays resumable
+        await settle(a);
+        deps.emit({ t: "resume-needs-pick", jobId: a.id });
+        return;
+      }
       await failJob(a, err);
     }
+  }
+
+  /** Is the tab on the job's page? Compared canonically on both sides, so an older record with a raw URL still matches. */
+  async function onJobPage(job: JobRecord, tabId: number): Promise<boolean> {
+    if (!deps.tabUrl) return true;
+    let want: string;
+    try {
+      want = canonicalPageUrl(job.source.pageUrl);
+    } catch {
+      return false;
+    }
+    return deps.tabUrl(tabId).then(sameCanonical(want), () => false);
   }
 
   async function resumeJob(jobId: string, tabId: number): Promise<void> {
@@ -786,7 +832,7 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     if (!job) return;
     let tab = tabId;
     let wait = deps.settleMs ?? 5000;
-    const here = deps.tabUrl ? await deps.tabUrl(tabId).then(sameCanonical(job.source.pageUrl), () => false) : true;
+    const here = await onJobPage(job, tabId);
     if (!here && deps.openTab) {
       tab = await deps.openTab(job.source.pageUrl);
       wait *= 3; // a fresh page needs time to load and be sniffed
@@ -809,6 +855,11 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
   async function resumePicked(jobId: string, tabId: number, picked: VideoSource): Promise<void> {
     const job = await resumable(jobId);
     if (!job) return;
+    if (!(await onJobPage(job, tabId))) {
+      // the pick came from a tab that is not showing the job's page
+      deps.emit({ t: "failed", jobId, error: appError("not-found"), resumable: true, keptRatio: keptRatio(job) });
+      return;
+    }
     // prefer the registry's copy (manifests expanded) over the picker's snapshot
     const source = (await deps.listSources?.(tabId).catch(() => undefined))?.find((s) => s.id === picked.id) ?? picked;
     const variant = audioOnly(job) ? undefined : matchVariant(job.source.variant, source.variants);
@@ -825,10 +876,79 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     await jobs.remove(jobId);
   }
 
+  /**
+   * Ask the offscreen document what it is still running. Resolves to nothing running when there is no
+   * document, or it does not answer in time: those jobs then become resumable failures, which is safe
+   * because the host aborts an older run of a job id when a resume starts it again.
+   */
+  async function askRunning(): Promise<{ jobId: string; phase: "fetch" | "engine" }[]> {
+    if (!(await lifecycle.exists().catch(() => false))) return [];
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const answer = new Promise<{ jobId: string; phase: "fetch" | "engine" }[]>((r) => statusWaiters.push(r));
+    const timeout = new Promise<[]>((r) => (timer = setTimeout(() => r([]), deps.statusTimeoutMs ?? STATUS_TIMEOUT_MS)));
+    try {
+      await deps.engine.send({ t: "engine/status" });
+      return await Promise.race([answer, timeout]);
+    } catch {
+      return [];
+    } finally {
+      clearTimeout(timer);
+      statusWaiters.splice(0);
+    }
+  }
+
+  /** Take over a job the offscreen document kept running while the service worker was gone. */
+  function adopt(job: JobRecord, phase: "fetch" | "engine"): void {
+    const ref = job.source;
+    const source: VideoSource = {
+      id: ref.sourceId,
+      site: ref.site,
+      title: ref.title,
+      pageUrl: ref.pageUrl,
+      ...(ref.duration !== undefined ? { duration: ref.duration } : {}),
+      variants: [],
+      audioTracks: [],
+      protection: "none",
+      detectedBy: [],
+    };
+    const a: Active = {
+      id: job.id,
+      source,
+      plan: job.plan,
+      filename: job.filename,
+      ac: new AbortController(),
+      busy: phase,
+      holdsEngine: phase === "engine",
+      usesEngine: true,
+      cancelling: false,
+      finalized: false,
+      directResumes: 0,
+      gifReady: false,
+      ...(job.ruleId !== undefined ? { ruleId: job.ruleId } : {}),
+      ...(job.seeks ? { seeks: job.seeks.map((s) => s ?? undefined) } : {}),
+    };
+    active.set(job.id, a);
+    if (phase === "engine") engineOwner = job.id;
+    lifecycle.jobStarted(job.id);
+  }
+
   async function recover(): Promise<void> {
     const all = await jobs.list();
     const live = all.filter((j) => !active.has(j.id));
-    for (const j of recoverInterrupted(live, now())) {
+    const running = await askRunning();
+    const keepRules = new Set<number>([...active.values()].flatMap((a) => (a.ruleId === undefined ? [] : [a.ruleId])));
+    // GIF jobs are not adopted: their preview blob and size facts do not survive the worker
+    for (const { jobId, phase } of running) {
+      const job = live.find((j) => j.id === jobId);
+      if (!job || job.kind !== "download" || job.status !== "running" || active.has(jobId)) continue;
+      adopt(job, phase);
+      if (job.ruleId !== undefined) keepRules.add(job.ruleId);
+    }
+    await clearStaleRules(keepRules);
+    for (const j of recoverInterrupted(
+      live.filter((j) => !active.has(j.id)),
+      now(),
+    )) {
       if (all.find((o) => o.id === j.id)?.status !== j.status) await jobs.put(j);
     }
   }

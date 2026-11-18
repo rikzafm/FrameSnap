@@ -19,11 +19,15 @@ describe('manifest', () => {
         'webRequest',
         'offscreen',
         'clipboardWrite',
-        'commands',
         'alarms',
         'declarativeNetRequestWithHostAccess',
       ].sort(),
     );
+  });
+
+  it('does not list "commands" as a permission (it is a manifest key, and Chrome warns on the permission)', () => {
+    expect(store.permissions).not.toContain('commands');
+    expect(Object.keys(store.commands)).toContain('_execute_action');
   });
 
   it('asks for unlisted sites only at runtime', () => {

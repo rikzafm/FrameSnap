@@ -71,14 +71,21 @@ export function createEngineHost(deps: EngineHostDeps): EngineHost {
     }
   };
 
-  const begin = (jobId: string): AbortController => {
+  /** What each controlled job is doing, for `engine/status`. */
+  const phases = new Map<string, 'fetch' | 'engine'>();
+
+  const begin = (jobId: string, phase: 'fetch' | 'engine'): AbortController => {
     controllers.get(jobId)?.abort();
     const ac = new AbortController();
     controllers.set(jobId, ac);
+    phases.set(jobId, phase);
     return ac;
   };
   const end = (jobId: string, ac: AbortController) => {
-    if (controllers.get(jobId) === ac) controllers.delete(jobId);
+    if (controllers.get(jobId) === ac) {
+      controllers.delete(jobId);
+      phases.delete(jobId);
+    }
   };
 
   const fail = (jobId: string, err: unknown) => {
@@ -96,7 +103,7 @@ export function createEngineHost(deps: EngineHostDeps): EngineHost {
   }
 
   async function fetchPhase(msg: Extract<WorkerToEngine, { t: 'engine/fetch' }>): Promise<void> {
-    const ac = begin(msg.jobId);
+    const ac = begin(msg.jobId, 'fetch');
     if (msg.fresh) await forget(msg.jobId);
     const run = (store: ChunkStore) =>
       runFetchPhase({
@@ -139,7 +146,7 @@ export function createEngineHost(deps: EngineHostDeps): EngineHost {
     jobId: string,
     work: (signal: AbortSignal, onProgress: (r: number) => void) => Promise<{ blob: Blob }>,
   ): Promise<void> {
-    const ac = begin(jobId);
+    const ac = begin(jobId, 'engine');
     try {
       const { blob } = await work(ac.signal, (ratio) =>
         send({ t: 'engine/progress', jobId, phase: 'engine', ratio }),
@@ -252,6 +259,13 @@ export function createEngineHost(deps: EngineHostDeps): EngineHost {
 
         case 'engine/storage':
           send({ t: 'engine/ready', storage: await storage() });
+          return;
+
+        case 'engine/status':
+          send({
+            t: 'engine/running',
+            jobs: [...phases].map(([jobId, phase]) => ({ jobId, phase })),
+          });
           return;
       }
     },

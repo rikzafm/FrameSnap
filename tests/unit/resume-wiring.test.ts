@@ -5,8 +5,11 @@
  * ranges are fetched" is read off the CDN log.
  */
 import { describe, expect, it } from "vitest";
+import { createEngineLifecycle } from "../../src/background/engine-lifecycle";
 import { jobKey } from "../../src/background/job-store";
-import type { JobRecord } from "../../src/core/jobs/job";
+import { newJob, start as startRecord, type JobRecord } from "../../src/core/jobs/job";
+import { makeSourceRef } from "../../src/core/jobs/source-ref";
+import { planDownload } from "../../src/core/plan";
 import { parseMpd } from "../../src/core/media/dash";
 import type { VideoSource } from "../../src/core/model";
 import * as fx from "../fixtures/hls-page";
@@ -329,5 +332,75 @@ describe("startup recovery and cleanup", () => {
     await h.orch.sweep(rec(h, jobId)!.updatedAt + 8 * DAY);
     expect(await h.store.jobs()).toEqual([]);
     expect(rec(h, jobId)).toBeUndefined();
+  });
+});
+
+describe("service-worker restart while the offscreen document keeps working", () => {
+  /** A fresh orchestrator (the restarted service worker) whose engine reports `running` when asked. */
+  function restarted(running: { jobId: string; phase: "fetch" | "engine" }[]) {
+    const lifecycle = createEngineLifecycle({ api: { has: async () => true, create: async () => undefined, close: async () => undefined }, url: "offscreen.html" });
+    const asked: string[] = [];
+    const ref: { h?: Harness } = {};
+    const h = createHarness({
+      sources: [big("s1")],
+      deps: {
+        lifecycle,
+        engine: {
+          send: async (m) => {
+            asked.push(m.t);
+            if (m.t === "engine/status") void ref.h!.orch.onEngineMessage({ t: "engine/running", jobs: running });
+          },
+        },
+      },
+    });
+    ref.h = h;
+    return { h, asked };
+  }
+
+  const runningRecord = (id: string, over: Partial<JobRecord> = {}): JobRecord => {
+    const source = big("s1");
+    const options = { format: "mkv" as const, quality: "best", audio: "keep" as const, filenameTemplate: "{title}" };
+    const plan = planDownload(source, options);
+    return { ...startRecord(newJob({ id, kind: "download", filename: "a.mkv", source: makeSourceRef(source, source.variants[0]), options, plan, now: 1 }), 2), ...over };
+  };
+  const netError = { code: "network", message: "x", retryable: true } as const;
+
+  it("keeps a job the engine still runs and carries on reporting its events", async () => {
+    const { h, asked } = restarted([{ jobId: "live", phase: "fetch" }]);
+    h.area.data[jobKey("live")] = runningRecord("live");
+    h.area.data[jobKey("dead")] = runningRecord("dead");
+
+    await h.orch.recover();
+    expect(asked).toContain("engine/status");
+    expect(rec(h, "live")!.status).toBe("running");
+    expect(rec(h, "dead")).toMatchObject({ status: "failed", resumable: true });
+
+    await h.orch.onEngineMessage({ t: "engine/progress", jobId: "live", phase: "fetch", ratio: 0.5 });
+    expect(h.events).toContainEqual({ t: "progress", jobId: "live", phase: "fetch", ratio: 0.5 });
+    await h.orch.onEngineMessage({ t: "engine/error", jobId: "live", error: netError, resumable: true });
+    expect(h.events.find((e) => e.jobId === "live" && e.t === "failed")).toMatchObject({ resumable: true });
+    expect(rec(h, "live")).toMatchObject({ status: "failed", resumable: true });
+  });
+
+  it("falls back to resumable failures when there is no engine to ask", async () => {
+    const lifecycle = createEngineLifecycle({ api: { has: async () => false, create: async () => undefined, close: async () => undefined }, url: "offscreen.html" });
+    const h = createHarness({ deps: { lifecycle } });
+    h.area.data[jobKey("gone")] = runningRecord("gone");
+    await h.orch.recover();
+    expect(rec(h, "gone")).toMatchObject({ status: "failed", resumable: true });
+  });
+
+  it("removes header rules nobody owns and keeps the one an adopted job still needs", async () => {
+    const { h } = restarted([{ jobId: "live", phase: "fetch" }]);
+    h.area.data[jobKey("live")] = runningRecord("live", { ruleId: 8 });
+    const rule = (id: number) => ({ id, priority: 1, action: { type: "modifyHeaders" }, condition: {} }) as unknown as chrome.declarativeNetRequest.Rule;
+    h.rules.set(7, rule(7));
+    h.rules.set(8, rule(8));
+
+    await h.orch.recover();
+    expect([...h.rules.keys()]).toEqual([8]);
+
+    await h.orch.onEngineMessage({ t: "engine/error", jobId: "live", error: netError, resumable: true });
+    expect(h.rules.size).toBe(0);
   });
 });
