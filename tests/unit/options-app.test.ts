@@ -5,6 +5,7 @@ import { createOptions, type OptionsDeps } from "../../src/options/app";
 import { DEFAULT_SETTINGS, migrateSettings, type Settings } from "../../src/core/settings";
 import { DEFAULT_SNAP_OPTIONS, type SnapOptions } from "../../src/core/snap";
 import type { HistoryEntry } from "../../src/background/download";
+import { supportedSiteNames } from "../../src/ui/sites";
 import type { StoppedRow } from "../../src/options/data";
 
 let root: HTMLElement;
@@ -241,6 +242,14 @@ describe("clear all", () => {
     await vi.waitFor(() => expect(q(".history")!.textContent).toContain("No downloads yet"));
     byText("button", "Undo")!.click();
     await vi.waitFor(() => expect(calls.undo).toHaveLength(1));
+  });
+});
+
+describe("footer", () => {
+  it("names the supported sites", async () => {
+    await make();
+    const text = q("footer")!.textContent!;
+    for (const name of supportedSiteNames()) expect(text).toContain(name);
   });
 });
 

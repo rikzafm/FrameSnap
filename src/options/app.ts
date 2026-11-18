@@ -9,6 +9,7 @@ import type { AudioMode, OutputFormat } from "../core/model";
 import type { Settings, Theme } from "../core/settings";
 import type { SnapFormat, SnapOptions } from "../core/snap";
 import { button, h, nextId, segmented, selectRow, switchControl, toast } from "../ui/components";
+import { supportedSiteNames } from "../ui/sites";
 import type { StoppedRow } from "./data";
 
 export interface OptionsDeps {
@@ -310,6 +311,7 @@ export async function createOptions(root: HTMLElement, deps: OptionsDeps) {
     const notice = firstRun();
     if (notice) frag.append(notice);
     for (const part of [stoppedView(), historyView(), defaults(), images(), gifs(), sites(), appearance()]) if (part) frag.append(part);
+    frag.append(h("footer", { class: "hint" }, `Works with ${supportedSiteNames().join(", ")}, and other sites you allow.`));
     frag.append(toastView());
     root.replaceChildren(frag);
     if (key) root.querySelector<HTMLElement>(`[data-key="${key}"]`)?.focus();
