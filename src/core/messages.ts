@@ -14,11 +14,13 @@ export type PopupToWorker =
   | { t: "job/resume"; jobId: string; tabId: number }
   | { t: "job/discard"; jobId: string }
   | { t: "picker/start"; tabId: number; resumeJobId?: string }
-  | { t: "snap/frame"; tabId: number; sourceId?: string };
+  | { t: "snap/frame"; tabId: number; sourceId?: string }
+  | { t: "demo/ping"; tabId: number; nonce: string };
 
 export type WorkerToPopup =
   | { t: "media/updated"; tabId: number; sources: VideoSource[]; selectedId?: string }
-  | { t: "job/event"; event: JobEvent };
+  | { t: "job/event"; event: JobEvent }
+  | { t: "demo/pong"; nonce: string; reply: string };
 
 export type JobEvent =
   | { t: "queued"; jobId: string }
@@ -28,21 +30,14 @@ export type JobEvent =
   | { t: "cancelled"; jobId: string }
   | { t: "resume-needs-pick"; jobId: string };
 
+/** Service worker to a tab's content script (tabs.sendMessage). */
+export type WorkerToContent = { t: "demo/ping"; nonce: string };
+
 export type ContentToWorker =
   | { t: "dom/report"; sources: VideoSource[]; frameUrl: string }
   | { t: "picker/picked"; source: VideoSource; resumeJobId?: string }
-  | { t: "snap/data"; dataUrl: string; width: number; height: number; time: number; title: string };
-
-const POPUP_TYPES = new Set<string>([
-  "media/list",
-  "job/download",
-  "job/gif",
-  "job/cancel",
-  "job/resume",
-  "job/discard",
-  "picker/start",
-  "snap/frame",
-]);
+  | { t: "snap/data"; dataUrl: string; width: number; height: number; time: number; title: string }
+  | { t: "demo/pong"; nonce: string; reply: string };
 
 function isObj(x: unknown): x is Record<string, unknown> {
   return typeof x === "object" && x !== null;
@@ -50,9 +45,16 @@ function isObj(x: unknown): x is Record<string, unknown> {
 
 const num = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
 const str = (x: unknown): x is string => typeof x === "string" && x.length > 0;
+const PHASES = new Set<string>(["fetch", "engine", "save"]);
+
+/** Loose structural check: enough to stop a malformed source crashing a receiver. */
+function isVideoSource(x: unknown): x is VideoSource {
+  return isObj(x) && str(x.id) && typeof x.title === "string" && Array.isArray(x.variants) && Array.isArray(x.audioTracks);
+}
+const isSources = (x: unknown): x is VideoSource[] => Array.isArray(x) && x.every(isVideoSource);
 
 export function isPopupToWorker(x: unknown): x is PopupToWorker {
-  if (!isObj(x) || typeof x.t !== "string" || !POPUP_TYPES.has(x.t)) return false;
+  if (!isObj(x) || typeof x.t !== "string") return false;
   switch (x.t) {
     case "media/list":
       return num(x.tabId);
@@ -68,6 +70,60 @@ export function isPopupToWorker(x: unknown): x is PopupToWorker {
       return num(x.tabId) && (x.resumeJobId === undefined || str(x.resumeJobId));
     case "snap/frame":
       return num(x.tabId) && (x.sourceId === undefined || str(x.sourceId));
+    case "demo/ping":
+      return num(x.tabId) && str(x.nonce);
+    default:
+      return false;
+  }
+}
+
+export function isJobEvent(x: unknown): x is JobEvent {
+  if (!isObj(x) || typeof x.t !== "string" || !str(x.jobId)) return false;
+  switch (x.t) {
+    case "queued":
+    case "cancelled":
+    case "resume-needs-pick":
+      return true;
+    case "progress":
+      return typeof x.phase === "string" && PHASES.has(x.phase) && num(x.ratio) && (x.bytes === undefined || num(x.bytes));
+    case "done":
+      return num(x.downloadId) && str(x.filename);
+    case "failed":
+      return isObj(x.error) && typeof x.resumable === "boolean" && num(x.keptRatio);
+    default:
+      return false;
+  }
+}
+
+export function isWorkerToPopup(x: unknown): x is WorkerToPopup {
+  if (!isObj(x) || typeof x.t !== "string") return false;
+  switch (x.t) {
+    case "media/updated":
+      return num(x.tabId) && isSources(x.sources) && (x.selectedId === undefined || str(x.selectedId));
+    case "job/event":
+      return isJobEvent(x.event);
+    case "demo/pong":
+      return str(x.nonce) && typeof x.reply === "string";
+    default:
+      return false;
+  }
+}
+
+export function isWorkerToContent(x: unknown): x is WorkerToContent {
+  return isObj(x) && x.t === "demo/ping" && str(x.nonce);
+}
+
+export function isContentToWorker(x: unknown): x is ContentToWorker {
+  if (!isObj(x) || typeof x.t !== "string") return false;
+  switch (x.t) {
+    case "dom/report":
+      return isSources(x.sources) && str(x.frameUrl);
+    case "picker/picked":
+      return isVideoSource(x.source) && (x.resumeJobId === undefined || str(x.resumeJobId));
+    case "snap/data":
+      return typeof x.dataUrl === "string" && num(x.width) && num(x.height) && num(x.time) && typeof x.title === "string";
+    case "demo/pong":
+      return str(x.nonce) && typeof x.reply === "string";
     default:
       return false;
   }
