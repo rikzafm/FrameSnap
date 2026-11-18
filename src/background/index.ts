@@ -6,6 +6,7 @@ import { parseMaster, parseMedia } from "../core/media/hls";
 import { parseMpd } from "../core/media/dash";
 import { ENGINE_PORT, parsePopupPortName } from "../platform/ports";
 import { alarms, downloads, dnr, offscreen, runtime, session, storage, tabs, webRequest } from "../platform/chrome";
+import { resolveDefaultQuality } from "../core/settings";
 import { settingsStore } from "../platform/settings-store";
 import { createDownloadOrchestrator } from "./download";
 import { createEngineLifecycle } from "./engine-lifecycle";
@@ -103,11 +104,16 @@ void (async () => {
   await orchestrator.sweep();
 })().catch(() => undefined);
 
+// First run: the options page opens with the use notice and privacy summary.
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === "install") void chrome.runtime.openOptionsPage().catch(() => undefined);
+});
+
 /** Prefer the registry's copy (manifests expanded) over the picker's snapshot. */
 async function startPickedDownload(tabId: number, picked: VideoSource): Promise<void> {
   const source = (await registry.list(tabId)).find((s) => s.id === picked.id) ?? picked;
   const settings = await settingsStore().get();
-  await orchestrator.start(source, { format: settings.defaultFormat, quality: "best", audio: "keep", filenameTemplate: settings.filenameTemplate });
+  await orchestrator.start(source, { format: settings.defaultFormat, quality: resolveDefaultQuality(source, settings.defaultQuality), audio: settings.defaultAudio, filenameTemplate: settings.filenameTemplate });
 }
 
 webRequest.onHeadersReceived.addListener(

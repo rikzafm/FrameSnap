@@ -42,6 +42,7 @@ export const downloads = {
   cancel: (id: number) => chrome.downloads.cancel(id),
   removeFile: (id: number) => chrome.downloads.removeFile(id),
   erase: (q: chrome.downloads.DownloadQuery) => chrome.downloads.erase(q),
+  show: (id: number) => chrome.downloads.show(id),
   onChanged: chrome.downloads.onChanged,
 };
 
@@ -74,4 +75,5 @@ export const permissions = {
   contains: (p: chrome.permissions.Permissions) => chrome.permissions.contains(p),
   request: (p: chrome.permissions.Permissions) => chrome.permissions.request(p),
   remove: (p: chrome.permissions.Permissions) => chrome.permissions.remove(p),
+  getAll: () => chrome.permissions.getAll(),
 };
