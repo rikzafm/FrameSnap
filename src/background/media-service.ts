@@ -6,6 +6,8 @@
  */
 import { pickAdapter } from "../adapters/registry";
 import type { AdapterContext } from "../adapters/types";
+import { resumableOn, type JobRecord } from "../core/jobs/job";
+import { canonicalPageUrl } from "../core/jobs/source-ref";
 import type { WorkerToPopup } from "../core/messages";
 import type { VideoSource } from "../core/model";
 import type { TabRegistry } from "./registry";
@@ -18,6 +20,8 @@ export interface MediaServiceDeps {
   /** Ask the tab's content script for a DOM scan. Undefined when unreachable. */
   scanDom(tabId: number): Promise<VideoSource[] | undefined>;
   adapterContext: AdapterContext;
+  /** Saved jobs, for the resume banner. */
+  jobs?: { list(): Promise<JobRecord[]> };
 }
 
 export interface MediaService {
@@ -41,12 +45,24 @@ export function createMediaService(deps: MediaServiceDeps): MediaService {
   /** Tapped payloads per tab, newest last. A tweet page can fire many GraphQL calls. */
   const tapped = new Map<number, unknown[]>();
 
-  const message = (tabId: number, sources: VideoSource[]): WorkerToPopup => ({
+  const message = (tabId: number, sources: VideoSource[], resumable?: JobRecord[]): WorkerToPopup => ({
     t: "media/updated",
     tabId,
     sources,
     ...(sources[0] ? { selectedId: sources[0].id } : {}),
+    ...(resumable ? { resumable } : {}),
   });
+
+  /** Failed jobs the popup can offer to resume on this tab's page. */
+  async function resumableFor(tabId: number): Promise<JobRecord[] | undefined> {
+    if (!deps.jobs) return undefined;
+    try {
+      const url = (await deps.getTab(tabId))?.url;
+      return url ? resumableOn(await deps.jobs.list(), canonicalPageUrl(url)) : [];
+    } catch {
+      return undefined;
+    }
+  }
 
   async function resolveAll(tabId: number, sources: VideoSource[]): Promise<void> {
     for (const s of sources.filter(unresolved)) {
@@ -98,11 +114,12 @@ export function createMediaService(deps: MediaServiceDeps): MediaService {
       await registry.clear(tabId);
     },
     async openPopup(tabId, post) {
-      post(message(tabId, await registry.list(tabId)));
+      const resumable = await resumableFor(tabId);
+      post(message(tabId, await registry.list(tabId), resumable));
       const scanned = await deps.scanDom(tabId).catch(() => undefined);
       if (scanned?.length) await registry.ingest(tabId, scanned);
       await resolveAll(tabId, await registry.list(tabId));
-      post(message(tabId, await registry.list(tabId)));
+      post(message(tabId, await registry.list(tabId), resumable));
     },
   };
 }

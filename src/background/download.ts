@@ -16,25 +16,29 @@
 import { FrameSnapError, appError, httpError, toAppError, type AppError } from "../core/errors";
 import type { EngineToWorker, WorkerToEngine } from "../core/engine-messages";
 import type { Seek } from "../core/ffmpeg-args";
+import { isAudioFormat } from "../core/codecs";
 import { buildFilename } from "../core/filename";
 import type { TrackPlan } from "../core/jobs/chunks";
 import {
   cancel as cancelRecord,
+  decideResume,
   enterPhase,
   fail as failRecord,
+  fetchComplete,
   finish,
   newJob,
+  recoverInterrupted,
   start as startRecord,
   trackValidators,
   withTracks,
   type JobRecord,
 } from "../core/jobs/job";
-import { makeSourceRef, type TrackValidators } from "../core/jobs/source-ref";
+import { canonicalPageUrl, makeSourceRef, matchSource, matchVariant, type MatchResult, type TrackValidators } from "../core/jobs/source-ref";
 import { buildTracks, probeFromHeaders, type ProbeResult, type ResolvedInput } from "../core/jobs/tracks";
 import type { CaptureEvent, JobEvent, WorkerToContent } from "../core/messages";
 import { isMasterPlaylist, type parseMedia } from "../core/media/hls";
 import type { parseMpd } from "../core/media/dash";
-import type { DownloadOptions, VideoSource } from "../core/model";
+import type { DownloadOptions, Variant, VideoSource } from "../core/model";
 import { planDownload, type DownloadPlan, type PlanInput } from "../core/plan";
 import type { EngineLifecycle } from "./engine-lifecycle";
 import type { JobStore } from "./job-store";
@@ -98,6 +102,15 @@ export interface DownloadDeps {
   lookupSource(tabId: number, sourceId: string): Promise<VideoSource | undefined>;
   history: { add(entry: HistoryEntry): Promise<void> };
   emit(event: JobEvent): void;
+  /** Resume: the sources currently detected on a tab (the registry). */
+  listSources?(tabId: number): Promise<VideoSource[]>;
+  /** Resume: the tab's URL, or undefined when the tab is gone. */
+  tabUrl?(tabId: number): Promise<string | undefined>;
+  /** Resume from History: open the job's page in a new tab and return its id. */
+  openTab?(url: string): Promise<number>;
+  /** How long resume waits for the registry to settle on the tab (default 5 s). */
+  settleMs?: number;
+  sleep?(ms: number): Promise<void>;
   now?: () => number;
   newId?: () => string;
 }
@@ -115,7 +128,19 @@ export interface DownloadOrchestrator {
   onEngineDisconnect(): Promise<void>;
   /** chrome.downloads.onChanged. */
   onDownloadChanged(delta: DownloadDelta): void;
+  /** Resume a failed job on a tab (opens the job's page first when the tab is gone or shows another page). */
+  resume(jobId: string, tabId: number): Promise<void>;
+  /** The user picked the video by hand for a job that sent `resume-needs-pick`. */
+  resumePicked(jobId: string, tabId: number, source: VideoSource): Promise<void>;
+  /** Drop a job's chunks and record. */
+  discard(jobId: string): Promise<void>;
+  /** Service-worker start: jobs left queued or running become resumable failures. */
+  recover(): Promise<void>;
+  /** Chunk-store housekeeping (7-day expiry, orphans, cap). Resolves once the engine reported. */
+  sweep(nowMs?: number): Promise<void>;
 }
+
+const POLL_MS = 250;
 
 const MAX_DIRECT_RESUMES = 3;
 const RULE_TYPES: chrome.declarativeNetRequest.ResourceType[] = ["xmlhttprequest", "media", "other"] as chrome.declarativeNetRequest.ResourceType[];
@@ -182,6 +207,15 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
   let rulesChain: Promise<unknown> = Promise.resolve();
   /** Where each capture job's page side lives, so a late result for a dropped job can still be freed. */
   const captureHomes = new Map<string, { tabId: number; frameId: number }>();
+  const sweepWaiters: ((jobIds: string[]) => void)[] = [];
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const sameCanonical = (want: string) => (url: string | undefined) => {
+    try {
+      return url !== undefined && canonicalPageUrl(url) === want;
+    } catch {
+      return false;
+    }
+  };
 
   /** Read-modify-write on the stored record (commits arrive through the store, so never write a stale copy). */
   async function update(id: string, fn: (j: JobRecord) => JobRecord): Promise<JobRecord | undefined> {
@@ -442,9 +476,14 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
 
   // ---- engine routes -------------------------------------------------------------
 
-  async function runEngineRoute(a: Active): Promise<void> {
-    a.usesEngine = true;
-    lifecycle.jobStarted(a.id);
+  interface Prepared {
+    tracks: TrackPlan[];
+    seeks: (Seek | undefined)[];
+    withValidators: { plan: TrackPlan; validators: TrackValidators }[];
+  }
+
+  /** Probe / parse the inputs and plan the chunks (fresh URLs, fresh validators). */
+  async function prepareTracks(a: Active): Promise<Prepared> {
     await setRules(a, a.plan.inputs.map((i) => i.url));
     const resolved: Awaited<ReturnType<typeof resolveInput>>[] = [];
     for (const input of a.plan.inputs) resolved.push(await resolveInput(a, input));
@@ -455,14 +494,54 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     // the manifests know the real container (a plan input from a manifest only says "unknown")
     a.plan = { ...a.plan, inputs: a.plan.inputs.map((input, i) => ({ ...input, container: built.tracks[i]!.container })) };
     const withValidators = built.tracks.map((plan, i) => ({ plan, validators: trackValidators(plan, resolved[i]!.http) }));
-    const plan = a.plan;
-    await update(a.id, (j) => startRecord(withTracks({ ...j, plan }, withValidators, now()), now()));
-    a.seeks = built.seeks;
-    await setRules(a, [...a.plan.inputs.map((i) => i.url), ...built.tracks.flatMap((t) => t.chunks.map((c) => c.url))]);
+    return { tracks: built.tracks as TrackPlan[], seeks: built.seeks, withValidators };
+  }
+
+  async function dispatchFetch(a: Active, p: Prepared, fresh: boolean): Promise<void> {
+    a.seeks = p.seeks;
+    await setRules(a, [...a.plan.inputs.map((i) => i.url), ...p.tracks.flatMap((t) => t.chunks.map((c) => c.url))]);
     a.ac.signal.throwIfAborted();
     a.busy = "fetch";
-    const validators: Record<string, TrackValidators> = Object.fromEntries(withValidators.map((t) => [t.plan.trackId, t.validators]));
-    await deps.engine.send({ t: "engine/fetch", jobId: a.id, tracks: built.tracks as TrackPlan[], headers: a.source.headers, validators });
+    const validators: Record<string, TrackValidators> = Object.fromEntries(p.withValidators.map((t) => [t.plan.trackId, t.validators]));
+    await deps.engine.send({ t: "engine/fetch", jobId: a.id, tracks: p.tracks, headers: a.source.headers, validators, ...(fresh ? { fresh: true } : {}) });
+  }
+
+  async function runEngineRoute(a: Active): Promise<void> {
+    a.usesEngine = true;
+    lifecycle.jobStarted(a.id);
+    const p = await prepareTracks(a);
+    const plan = a.plan;
+    await update(a.id, (j) => startRecord(withTracks({ ...j, plan }, p.withValidators, now()), now()));
+    await dispatchFetch(a, p, false);
+  }
+
+  /** Resume: same job id, fresh tracks; keeps the committed chunks the decision allows. */
+  async function runResume(a: Active, job: JobRecord, match: Extract<MatchResult, { status: "found" }>): Promise<void> {
+    a.usesEngine = true;
+    lifecycle.jobStarted(a.id);
+    const p = await prepareTracks(a);
+    const decision = decideResume(job, match, p.withValidators);
+    if (decision.action === "pick") throw new FrameSnapError("not-found");
+    const keep = decision.action === "continue" ? decision.keep : undefined;
+    if (decision.action === "restart") deps.emit({ t: "notice", jobId: a.id, code: decision.reason });
+    const plan = a.plan;
+    const rec = await update(a.id, (j) => {
+      const next = withTracks({ ...j, plan }, p.withValidators, now());
+      const tracks = keep ? next.tracks.map((t) => ({ ...t, committed: keep.get(t.trackId) ?? [] })) : next.tracks;
+      const total = tracks.reduce((s, t) => s + t.keys.length, 0);
+      const done = tracks.reduce((s, t) => s + t.committed.length, 0);
+      return startRecord({ ...next, tracks, progress: total ? done / total : 0 }, now());
+    });
+    if (!rec) throw new FrameSnapError("internal", "job record missing");
+    deps.emit({ t: "progress", jobId: a.id, phase: "fetch", ratio: rec.progress });
+    if (keep && fetchComplete(rec)) {
+      // everything was fetched before the engine failed: skip the fetch phase
+      a.seeks = p.seeks;
+      a.ac.signal.throwIfAborted();
+      await startEnginePhase(a);
+      return;
+    }
+    await dispatchFetch(a, p, decision.action === "restart");
   }
 
   async function pump(): Promise<void> {
@@ -511,6 +590,10 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
 
   async function handleEngine(m: EngineToWorker): Promise<void> {
     if (m.t === "engine/ready") return;
+    if (m.t === "engine/swept") {
+      for (const done of sweepWaiters.splice(0)) done(m.jobIds);
+      return;
+    }
     const a = active.get(m.jobId);
     if (!a || a.finalized) {
       // a result for a job we already gave up on: free the blob
@@ -597,8 +680,122 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     return id;
   }
 
-  return {
+  // ---- resume ----------------------------------------------------------------------
+
+  const audioOnly = (job: JobRecord) => {
+    const o = job.options as DownloadOptions;
+    return o.audio === "only" || isAudioFormat(o.format);
+  };
+
+  async function resumable(jobId: string): Promise<JobRecord | undefined> {
+    const job = await jobs.get(jobId);
+    if (!job || job.kind !== "download" || job.status !== "failed" || !job.resumable || active.has(jobId)) return undefined;
+    return job;
+  }
+
+  /** Re-plan against the re-identified video and run the fetch-from-here pipeline. */
+  async function continueWith(job: JobRecord, source: VideoSource, variant: Variant | undefined): Promise<void> {
+    const stored = job.options as DownloadOptions;
+    const options: DownloadOptions = variant ? { ...stored, quality: variant.id } : stored;
+    const a: Active = {
+      id: job.id,
+      source,
+      plan: job.plan,
+      filename: job.filename,
+      ac: new AbortController(),
+      holdsEngine: false,
+      usesEngine: false,
+      cancelling: false,
+      finalized: false,
+      directResumes: 0,
+    };
+    active.set(job.id, a);
+    try {
+      a.plan = planDownload(source, options);
+      if (!a.plan.resumable || a.plan.route === "direct") throw new FrameSnapError("unsupported", "this video can no longer be resumed");
+      await runResume(a, job, { status: "found", source, variant, via: "id" });
+    } catch (err) {
+      if (a.cancelling) return;
+      await failJob(a, err);
+    }
+  }
+
+  async function resumeJob(jobId: string, tabId: number): Promise<void> {
+    const job = await resumable(jobId);
+    if (!job) return;
+    let tab = tabId;
+    let wait = deps.settleMs ?? 5000;
+    const here = deps.tabUrl ? await deps.tabUrl(tabId).then(sameCanonical(job.source.pageUrl), () => false) : true;
+    if (!here && deps.openTab) {
+      tab = await deps.openTab(job.source.pageUrl);
+      wait *= 3; // a fresh page needs time to load and be sniffed
+    }
+    const audio = audioOnly(job);
+    let match: MatchResult;
+    for (let waited = 0; ; waited += POLL_MS) {
+      const sources = (await deps.listSources?.(tab).catch(() => undefined)) ?? [];
+      match = matchSource(job.source, sources, audio);
+      if (match.status === "found" || waited >= wait) break;
+      await sleep(POLL_MS);
+    }
+    if (match.status !== "found") {
+      deps.emit({ t: "resume-needs-pick", jobId });
+      return;
+    }
+    await continueWith(job, match.source, match.variant);
+  }
+
+  async function resumePicked(jobId: string, tabId: number, picked: VideoSource): Promise<void> {
+    const job = await resumable(jobId);
+    if (!job) return;
+    // prefer the registry's copy (manifests expanded) over the picker's snapshot
+    const source = (await deps.listSources?.(tabId).catch(() => undefined))?.find((s) => s.id === picked.id) ?? picked;
+    const variant = audioOnly(job) ? undefined : matchVariant(job.source.variant, source.variants);
+    if (!audioOnly(job) && !variant) {
+      deps.emit({ t: "failed", jobId, error: appError("not-found"), resumable: true, keptRatio: keptRatio(job) });
+      return;
+    }
+    await continueWith(job, source, variant);
+  }
+
+  async function discard(jobId: string): Promise<void> {
+    if (active.has(jobId)) await api.cancel(jobId);
+    await deps.engine.send({ t: "engine/discard", jobId }).catch(() => undefined);
+    await jobs.remove(jobId);
+  }
+
+  async function recover(): Promise<void> {
+    const all = await jobs.list();
+    const live = all.filter((j) => !active.has(j.id));
+    for (const j of recoverInterrupted(live, now())) {
+      if (all.find((o) => o.id === j.id)?.status !== j.status) await jobs.put(j);
+    }
+  }
+
+  async function sweep(nowMs: number = now()): Promise<void> {
+    const records = (await jobs.list()).map((j) => ({ id: j.id, status: j.status, resumable: j.resumable, updatedAt: j.updatedAt }));
+    lifecycle.jobStarted("sweep");
+    try {
+      const reported = new Promise<string[]>((r) => sweepWaiters.push(r));
+      await deps.engine.send({ t: "engine/sweep", records, now: nowMs });
+      const evicted = await reported;
+      // a failed job whose chunks are gone cannot resume: drop the record too
+      for (const id of evicted) {
+        const rec = await jobs.get(id);
+        if (rec?.status === "failed") await jobs.remove(id);
+      }
+    } finally {
+      lifecycle.jobFinished("sweep");
+    }
+  }
+
+  const api: DownloadOrchestrator = {
     start: startJob,
+    resume: resumeJob,
+    resumePicked,
+    discard,
+    recover,
+    sweep,
 
     async download({ tabId, sourceId, options }) {
       const source = await deps.lookupSource(tabId, sourceId);
@@ -644,6 +841,7 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
 
     async onEngineDisconnect() {
       engineOwner = undefined;
+      for (const done of sweepWaiters.splice(0)) done([]);
       for (const a of [...active.values()]) {
         if (a.busy === "capture" || (!a.busy && !engineQueue.includes(a.id))) continue;
         a.busy = undefined;
@@ -664,6 +862,7 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
       }
     },
   };
+  return api;
 
   async function interrupted(a: Active, downloadId: number, code: string | undefined): Promise<void> {
     const item = (await downloads.search({ id: downloadId }).catch(() => []))[0];

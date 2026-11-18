@@ -5,7 +5,7 @@ import type { DownloadOptions, VideoSource } from "../core/model";
 import { parseMaster, parseMedia } from "../core/media/hls";
 import { parseMpd } from "../core/media/dash";
 import { ENGINE_PORT, parsePopupPortName } from "../platform/ports";
-import { downloads, dnr, offscreen, permissions, runtime, scripting, session, storage, tabs, webRequest } from "../platform/chrome";
+import { alarms, downloads, dnr, offscreen, permissions, runtime, scripting, session, storage, tabs, webRequest } from "../platform/chrome";
 import mseHookFile from "../main-world/mse-main?script";
 import { grantedOptionalOrigins, syncMseScripts } from "../platform/mse-scripts";
 import { resolveDefaultQuality } from "../core/settings";
@@ -35,8 +35,11 @@ export const PICKER_SELECTION_KEY = "pickerSelection";
 
 const registry = createTabRegistry(session.area);
 
+const jobStore = createJobStore({ area: storage.local });
+
 const media = createMediaService({
   registry,
+  jobs: jobStore,
   sniffer: createSniffer(),
   getTab: (tabId) => tabs.get(tabId).catch(() => undefined),
   scanDom: async (tabId) => {
@@ -73,7 +76,7 @@ const engineLink = createEngineLink({ ensure: () => lifecycle.ensure() });
 const history = createHistoryStore(storage.local);
 
 const orchestrator = createDownloadOrchestrator({
-  jobs: createJobStore({ area: storage.local }),
+  jobs: jobStore,
   engine: engineLink,
   lifecycle,
   downloads,
@@ -85,6 +88,9 @@ const orchestrator = createDownloadOrchestrator({
   lookupSource: async (tabId, sourceId) => (await registry.list(tabId)).find((s) => s.id === sourceId),
   history,
   emit: (event) => broadcast({ t: "job/event", event }),
+  listSources: (tabId) => registry.list(tabId),
+  tabUrl: async (tabId) => (await tabs.get(tabId).catch(() => undefined))?.url,
+  openTab: async (url) => (await tabs.create({ url, active: true })).id ?? -1,
 });
 
 downloads.onChanged.addListener((delta) => orchestrator.onDownloadChanged(delta));
@@ -107,6 +113,18 @@ async function syncMseHook(): Promise<void> {
 void syncMseHook().catch(() => undefined);
 permissions.onAdded.addListener(() => void syncMseHook().catch(() => undefined));
 permissions.onRemoved.addListener(() => void syncMseHook().catch(() => undefined));
+
+// ---- startup recovery and daily cleanup (spec 6.6) ------------------------------------
+
+const SWEEP_ALARM = "frame-snap/sweep";
+alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === SWEEP_ALARM) void orchestrator.sweep().catch(() => undefined);
+});
+void (async () => {
+  await orchestrator.recover();
+  await alarms.create(SWEEP_ALARM, { delayInMinutes: 1, periodInMinutes: 24 * 60 });
+  await orchestrator.sweep();
+})().catch(() => undefined);
 
 // First run: the options page opens with the use notice and privacy summary.
 chrome.runtime.onInstalled.addListener((details) => {
@@ -165,6 +183,14 @@ runtime.onConnect.addListener((port) => {
       void orchestrator.download({ tabId: raw.tabId, sourceId: raw.sourceId, options: raw.options as DownloadOptions }).catch(() => undefined);
       return;
     }
+    if (raw.t === "job/resume") {
+      void orchestrator.resume(raw.jobId, raw.tabId).catch(() => undefined);
+      return;
+    }
+    if (raw.t === "job/discard") {
+      void orchestrator.discard(raw.jobId).catch(() => undefined);
+      return;
+    }
     if (raw.t === "job/cancel") {
       void orchestrator.cancel(raw.jobId).catch(() => undefined);
       return;
@@ -195,8 +221,7 @@ runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
   const from = { tabId: sender.tab.id, frameId: sender.frameId ?? 0 };
   void routeContentMessage(raw, from, {
     resumeRef,
-    // The resume flow (ticket 12) picks the job back up from here.
-    resumePicked: async () => undefined,
+    resumePicked: (jobId, tabId, source) => orchestrator.resumePicked(jobId, tabId, source),
     onPicked: async (tabId, source) => {
       await storage.local.set({ [PICKER_SELECTION_KEY]: { tabId, sourceId: source.id, tab: "list" } });
     },
