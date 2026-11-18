@@ -7,6 +7,7 @@ import { describeGif, GIF_TRIM_STEP, gifSourceSize, moveHandle, pickGifVariant }
 import { formatBytes } from "../core/format";
 import { GIF_MAX_SECONDS, type GifOptions, type TrimRange, type VideoSource } from "../core/model";
 import { button, h, nextId, segmented, switchControl } from "../ui/components";
+import { gifMemoryWarning } from "./model";
 
 export interface GifChoices {
   fps: GifOptions["fps"];
@@ -122,7 +123,8 @@ export function gifPanel(p: GifPanelProps): HTMLElement {
   }
   const d = describeGif(gifOptions(c), size);
   panel.append(h("p", { class: "estimate gif-estimate", role: "status" }, `Estimated size ${d.range}`));
-  if (d.lowMemory) panel.append(h("p", { class: "warning", role: "status" }, "This GIF is big for the converter and may run out of memory. Lower the width, the frame rate or the length."));
+  const memory = gifMemoryWarning(gifOptions(c), size.width, size.height);
+  if (memory) panel.append(h("p", { class: "warning", role: "status" }, memory));
 
   return h("div", { class: "rows" }, panel, h("div", { class: "actions actions-main" }, button(p.busy ? "Making GIF…" : "Make GIF", p.onMake, { variant: "primary", disabled: p.busy, key: "gif-make" })));
 }

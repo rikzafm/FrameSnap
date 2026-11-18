@@ -1,0 +1,51 @@
+.gif-strip {
+  position: relative;
+  height: 56px;
+  margin: 0 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--paper-sunken) center / cover no-repeat;
+}
+.gif-range {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  pointer-events: none;
+}
+.gif-handle {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 16px;
+  margin-left: -8px;
+  border-radius: 4px;
+  background: var(--accent);
+  cursor: ew-resize;
+  touch-action: none;
+}
+.gif-handle:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.gif-estimate {
+  margin: 0;
+}
+.gif-previews {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.gif-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+.gif-preview-img {
+  max-width: 100%;
+  border-radius: var(--radius);
+}

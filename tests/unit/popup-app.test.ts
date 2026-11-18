@@ -120,13 +120,13 @@ describe("single video", () => {
     expect(posted).toContainEqual({ t: "snap/frame", tabId: 5, sourceId: "a" });
   });
 
-  it("moves between tabs with arrow keys and remembers the mode; GIF and Screenshot are empty shells", () => {
+  it("moves between tabs with arrow keys and remembers the mode", () => {
     make().handle({ t: "media/updated", tabId: 5, sources: [source("a", "Cat clip")] });
     const video = q('[role="tab"][aria-selected="true"]')!;
     key(video, "ArrowRight");
     expect(modes).toEqual(["gif"]);
     expect(q('[role="tabpanel"]')!.id).toBeTruthy();
-    expect(q(".estimate")).toBeNull();
+    expect(q(".gif-strip")).not.toBeNull();
   });
 
   it("warns on large files", () => {

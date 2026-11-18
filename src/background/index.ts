@@ -1,4 +1,5 @@
 import { isEngineToWorker } from "../core/engine-messages";
+import { PICKER_SELECTION_KEY } from "../core/picker-selection";
 import { isContentToWorker, isPopupToWorker, type WorkerToPopup } from "../core/messages";
 import type { JobRecord } from "../core/jobs/job";
 import type { DownloadOptions, VideoSource } from "../core/model";
@@ -27,8 +28,7 @@ async function resumeRef(jobId: string) {
   return (got[jobKey(jobId)] as JobRecord | undefined)?.source;
 }
 
-/** Key the popup reads on open: which tab and source the picker asked for. */
-export const PICKER_SELECTION_KEY = "pickerSelection";
+export { PICKER_SELECTION_KEY };
 
 const registry = createTabRegistry(session.area);
 

@@ -2,6 +2,7 @@ import { isWorkerToPopup } from "../core/messages";
 import type { JobRecord } from "../core/jobs/job";
 import { resumableOn } from "../core/jobs/job";
 import { canonicalPageUrl } from "../core/jobs/source-ref";
+import { PICKER_SELECTION_KEY } from "../core/picker-selection";
 import { SNAP_PREFS_KEY, normalizeSnapOptions } from "../core/snap";
 import { JOB_PREFIX } from "../background/job-store";
 import { permissions, runtime, scripting, storage, tabs } from "../platform/chrome";
@@ -39,6 +40,11 @@ async function boot() {
     },
   };
 
+  // the picker's GIF button leaves the video it picked here; take it once
+  const picked = (await storage.local.get(PICKER_SELECTION_KEY))[PICKER_SELECTION_KEY] as { tabId?: number; sourceId?: string; tab?: string } | undefined;
+  if (picked) void storage.local.remove(PICKER_SELECTION_KEY);
+  const pick = picked && picked.tabId === tabId && typeof picked.sourceId === "string" ? { sourceId: picked.sourceId, mode: picked.tab === "gif" ? ("gif" as const) : mode } : undefined;
+
   const conn = connectWithReconnect({
     name: popupPortName(tabId),
     connect: runtime.connect,
@@ -56,6 +62,7 @@ async function boot() {
     mode,
     onModeChange: (m) => void memory.set(url, m),
     hasAccess,
+    ...(pick ? { pick } : {}),
     snap: {
       options: normalizeSnapOptions((await storage.local.get(SNAP_PREFS_KEY))[SNAP_PREFS_KEY]),
       onChange: (o) => void storage.local.set({ [SNAP_PREFS_KEY]: o }),
