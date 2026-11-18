@@ -22,9 +22,9 @@ function pageWindow() {
 function setup() {
   const page = pageWindow();
   const mse = fakeMseWindow();
-  let port: ReturnType<typeof createMsePort> | undefined;
-  const store = installMseHook(mse as never, { onChange: (s: StreamInfo) => port?.notify(s) });
-  port = createMsePort(page, store);
+  const ref: { port?: ReturnType<typeof createMsePort> } = {};
+  const store = installMseHook(mse as never, { onChange: (s: StreamInfo) => ref.port?.notify(s) });
+  ref.port = createMsePort(page, store);
   const ms = new FakeMediaSource();
   const url = mse.URL.createObjectURL(ms);
   const sb = ms.addSourceBuffer('video/mp4; codecs="avc1.64001f, mp4a.40.2"');

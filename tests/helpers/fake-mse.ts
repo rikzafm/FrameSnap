@@ -8,7 +8,8 @@ export class FakeSourceBuffer {
 
 export class FakeMediaSource {
   buffers: FakeSourceBuffer[] = [];
-  addSourceBuffer(_mime: string): FakeSourceBuffer {
+  addSourceBuffer(mime: string): FakeSourceBuffer {
+    void mime;
     const sb = new FakeSourceBuffer();
     this.buffers.push(sb);
     return sb;
@@ -18,8 +19,8 @@ export class FakeMediaSource {
 export function fakeMseWindow() {
   let n = 0;
   const URLCtor = {
-    createObjectURL: (_o: unknown): string => `blob:https://site.test/${++n}`,
-    revokeObjectURL: (_u: string): void => {},
+    createObjectURL: (obj: unknown): string => (void obj, `blob:https://site.test/${++n}`),
+    revokeObjectURL: (url: string): void => void url,
   };
   return { MediaSource: FakeMediaSource, SourceBuffer: FakeSourceBuffer, URL: URLCtor };
 }

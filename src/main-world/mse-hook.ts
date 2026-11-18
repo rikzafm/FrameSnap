@@ -137,7 +137,10 @@ export function installMseHook(win: MseWindow, opts: MseHookOptions = {}): MseSt
       let at = -1;
       for (const t of s.tracks) {
         const i = t.segments.findIndex((x) => !x.init);
-        if (i >= 0 && (!from || t.segments[i]!.seq < from.segments[at]!.seq)) (from = t), (at = i);
+        if (i >= 0 && (!from || t.segments[i]!.seq < from.segments[at]!.seq)) {
+          from = t;
+          at = i;
+        }
       }
       if (!from) return;
       const [gone] = from.segments.splice(at, 1);
