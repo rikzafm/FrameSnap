@@ -63,6 +63,7 @@ async function boot() {
     mode,
     onModeChange: (m) => void memory.set(url, m),
     hasAccess,
+    version: manifest.version().split(".").slice(0, 2).join("."),
     ...(pick ? { pick } : {}),
     snap: {
       options: normalizeSnapOptions((await storage.local.get(SNAP_PREFS_KEY))[SNAP_PREFS_KEY]),

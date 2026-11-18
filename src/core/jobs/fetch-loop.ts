@@ -40,6 +40,11 @@ export interface FetchPhaseOptions {
   onCommit?: (trackId: string, key: string, bytes: number) => void;
   /** Called after reconcile and after each commit. */
   onProgress?: (done: number, total: number) => void;
+  /**
+   * Byte-level progress while bodies stream in: bytes held so far (stored chunks plus the
+   * partial ones in flight) and the total when every chunk size is known.
+   */
+  onBytes?: (bytes: number, totalBytes: number | undefined) => void;
 }
 
 export interface FetchPhaseResult {
@@ -71,6 +76,26 @@ async function decryptAes128(data: Uint8Array, key: CryptoKey, ivHex: string): P
   return new Uint8Array(out);
 }
 
+async function readStreaming(body: ReadableStream<Uint8Array>, onChunk: (n: number) => void): Promise<Uint8Array> {
+  const reader = body.getReader();
+  const parts: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+    size += value.byteLength;
+    onChunk(value.byteLength);
+  }
+  const out = new Uint8Array(size);
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.byteLength;
+  }
+  return out;
+}
+
 export async function runFetchPhase(opts: FetchPhaseOptions): Promise<FetchPhaseResult> {
   const { jobId, tracks, store, http, signal } = opts;
   const concurrency = Math.max(1, opts.concurrency ?? 3);
@@ -93,6 +118,17 @@ export async function runFetchPhase(opts: FetchPhaseOptions): Promise<FetchPhase
   const total = tracks.reduce((s, t) => s + t.chunks.length, 0);
   let done = [...have.values()].reduce((s, set) => s + set.size, 0);
   opts.onProgress?.(done, total);
+
+  const knownTotal = tracks.every((t) => t.chunks.every((c) => c.bytes !== undefined))
+    ? tracks.reduce((s, t) => s + t.chunks.reduce((n, c) => n + (c.bytes ?? 0), 0), 0)
+    : undefined;
+  let heldBytes = 0;
+  for (const t of tracks) for (const c of t.chunks) if (have.get(t.trackId)!.has(c.key)) heldBytes += c.bytes ?? 0;
+  const addBytes = (n: number) => {
+    heldBytes += n;
+    opts.onBytes?.(heldBytes, knownTotal);
+  };
+  if (heldBytes > 0) opts.onBytes?.(heldBytes, knownTotal);
 
   const queue: { track: TrackPlan; chunk: ChunkSpec }[] = [];
   for (const track of tracks) for (const chunk of track.chunks) if (!have.get(track.trackId)!.has(chunk.key)) queue.push({ track, chunk });
@@ -149,7 +185,15 @@ export async function runFetchPhase(opts: FetchPhaseOptions): Promise<FetchPhase
         }
       }
     }
-    let data: Uint8Array = new Uint8Array(await res.arrayBuffer());
+    let data: Uint8Array;
+    let streamed = 0;
+    try {
+      data = opts.onBytes && res.body ? await readStreaming(res.body, (n) => ((streamed += n), addBytes(n))) : new Uint8Array(await res.arrayBuffer());
+    } catch (err) {
+      addBytes(-streamed); // the attempt is thrown away: do not count it twice on retry
+      throw err;
+    }
+    if (c.bytes !== undefined && data.byteLength !== c.bytes) addBytes(-streamed);
     if (c.bytes !== undefined && data.byteLength !== c.bytes) throw new FrameSnapError("network", `short read ${data.byteLength}/${c.bytes}`);
     if (c.decrypt) data = await decryptAes128(data, await keyFor(c.decrypt.keyUrl), c.decrypt.ivHex);
     return data;

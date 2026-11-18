@@ -139,6 +139,28 @@ describe("picker", () => {
     expect(outline().style.top).toBe("-50px");
   });
 
+  it("Download MP4 has a format menu: choosing a format downloads in it and Esc closes the menu first", () => {
+    const { a, picker, sent, root } = setup();
+    picker.start({});
+    click(a, 10, 10);
+    sent.length = 0;
+    const caret = root().querySelector<HTMLElement>(".caret")!;
+    expect(caret.getAttribute("aria-label")).toBe("Choose format");
+    caret.dispatchEvent(new MouseEvent("click", { bubbles: true, composed: true }));
+    const items = [...root().querySelectorAll<HTMLElement>("[role=menuitemradio]")];
+    expect(items.map((i) => i.dataset.format)).toEqual(["mp4", "webm", "mkv", "mov", "mp3", "m4a"]);
+    key("Escape");
+    expect(root().querySelector("[role=menu]")).toBeNull();
+    expect(picker.active).toBe(true);
+    root().querySelector<HTMLElement>(".caret")!.dispatchEvent(new MouseEvent("click", { bubbles: true, composed: true }));
+    root().querySelector<HTMLElement>("[data-format=webm]")!.dispatchEvent(new MouseEvent("click", { bubbles: true, composed: true }));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ t: "picker/action", action: "download", format: "webm" });
+    expect(root().textContent).toContain("Download WEBM");
+    root().querySelector<HTMLElement>("[data-action=download]")!.dispatchEvent(new MouseEvent("click", { bubbles: true, composed: true }));
+    expect(sent.at(-1)).toMatchObject({ action: "download", format: "webm" });
+  });
+
   it("GIF and Snap buttons send picker/action for the selected source", () => {
     const { a, picker, sent, root } = setup();
     picker.start({});

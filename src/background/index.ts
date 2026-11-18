@@ -3,7 +3,7 @@ import { PICKER_SELECTION_KEY } from "../core/picker-selection";
 import { toAppError } from "../core/errors";
 import { isContentToWorker, isPopupToWorker, type ContentToWorker, type JobEvent, type WorkerToPopup } from "../core/messages";
 import type { JobRecord } from "../core/jobs/job";
-import type { VideoSource } from "../core/model";
+import type { OutputFormat, VideoSource } from "../core/model";
 import { parseMaster, parseMedia } from "../core/media/hls";
 import { parseMpd } from "../core/media/dash";
 import { ENGINE_PORT, parsePopupPortName } from "../platform/ports";
@@ -141,12 +141,17 @@ lifecycleEvents.onInstalled((reason) => {
 });
 
 /** Prefer the registry's copy (manifests expanded) over the picker's snapshot. */
-async function startPickedDownload(tabId: number, picked: VideoSource): Promise<void> {
+async function startPickedDownload(tabId: number, picked: VideoSource, format?: OutputFormat): Promise<void> {
   const source = (await registry.list(tabId)).find((s) => s.id === picked.id) ?? picked;
   const settings = await settingsStore().get();
   await orchestrator.start(
     source,
-    { format: settings.defaultFormat, quality: resolveDefaultQuality(source, settings.defaultQuality), audio: settings.defaultAudio, filenameTemplate: settings.filenameTemplate },
+    {
+      format: format ?? settings.defaultFormat,
+      quality: resolveDefaultQuality(source, settings.defaultQuality),
+      audio: settings.defaultAudio,
+      filenameTemplate: settings.filenameTemplate,
+    },
     { tabId },
   );
 }
@@ -225,11 +230,11 @@ runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
     },
     onSnapData: (tabId, msg) => snap.onData(tabId, msg),
     onSnapTainted: (tabId, msg) => snap.onTainted(tabId, msg),
-    onAction: async (action, tabId, source) => {
+    onAction: async (action, tabId, source, format) => {
       if (action === "snap") return snap.frame(tabId, { source });
       if (action === "download") {
         // a throw would vanish here: show it as a failed job instead
-        return startPickedDownload(tabId, source).catch((err: unknown) =>
+        return startPickedDownload(tabId, source, format).catch((err: unknown) =>
           emitJob({ t: "failed", jobId: crypto.randomUUID(), error: toAppError(err), resumable: false, keptRatio: 0 }),
         );
       }

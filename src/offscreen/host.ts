@@ -105,6 +105,8 @@ export function createEngineHost(deps: EngineHostDeps): EngineHost {
   async function fetchPhase(msg: Extract<WorkerToEngine, { t: 'engine/fetch' }>): Promise<void> {
     const ac = begin(msg.jobId, 'fetch');
     if (msg.fresh) await forget(msg.jobId);
+    // once byte totals are known they drive the ratio, so chunk counts must not pull it back
+    let byteDriven = false;
     const run = (store: ChunkStore) =>
       runFetchPhase({
         jobId: msg.jobId,
@@ -117,7 +119,19 @@ export function createEngineHost(deps: EngineHostDeps): EngineHost {
         ...deps.fetchTuning,
         onCommit: (trackId, key, bytes) =>
           send({ t: 'engine/commit', jobId: msg.jobId, trackId, key, bytes }),
+        onBytes: (bytes, totalBytes) => {
+          if (totalBytes) byteDriven = true;
+          send({
+            t: 'engine/progress',
+            jobId: msg.jobId,
+            phase: 'fetch',
+            ratio: totalBytes ? Math.min(1, bytes / totalBytes) : 0,
+            bytes,
+            ...(totalBytes ? { totalBytes } : {}),
+          });
+        },
         onProgress: (done, total) =>
+          !byteDriven &&
           send({
             t: 'engine/progress',
             jobId: msg.jobId,

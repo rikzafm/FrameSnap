@@ -51,7 +51,7 @@ const sha = (path: string) => createHash('sha256').update(readFileSync(path)).di
 async function startAndExpire(e: Launched, f: FixtureServer): Promise<Page> {
   const page = await e.visit(f.pageUrl());
   const popup = await e.openPopup(page);
-  await popup.getByRole('button', { name: 'Download', exact: true }).first().click();
+  await popup.getByRole('button', { name: 'Download video', exact: true }).first().click();
   await waitFor(async () => {
     const s = await jobStatuses(e);
     return s.some((j) => j.status === 'failed') || undefined;

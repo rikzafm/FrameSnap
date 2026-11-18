@@ -30,6 +30,32 @@ describe("runFetchPhase", () => {
     expect(sameBytes(await blobBytes(out), body)).toBe(true);
   });
 
+  it("reports bytes held and the known total as bodies stream in", async () => {
+    const body = bytes(200 * KB);
+    const cdn = new FakeCdn().put("/v.mp4", { body, etag: '"a1"' });
+    const track = progressiveTrack("https://cdn.test/v.mp4", body.byteLength);
+    const seen: { bytes: number; total: number | undefined }[] = [];
+    await runFetchPhase({ jobId: "j", tracks: [track], store: new MemoryChunkStore(), http: cdn.http, signal: new AbortController().signal, sleep: noSleep, onBytes: (b, total) => seen.push({ bytes: b, total }) });
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((s) => s.total === body.byteLength)).toBe(true);
+    expect(seen.at(-1)!.bytes).toBe(body.byteLength);
+    expect(seen.every((s, i) => i === 0 || s.bytes >= seen[i - 1]!.bytes)).toBe(true);
+  });
+
+  it("starts the byte count from chunks already stored, and does not double count a retried chunk", async () => {
+    const body = bytes(192 * KB, 3);
+    const cdn = new FakeCdn().put("/v.mp4", { body, etag: '"e"' });
+    const store = new MemoryChunkStore();
+    const track = progressiveTrack("https://cdn.test/v.mp4", body.byteLength);
+    await store.write("j", "0", track.chunks[0]!.key, body.slice(0, 64 * KB));
+    cdn.failures.push((_p, n) => (n === 0 ? "network" : undefined));
+    const seen: number[] = [];
+    await runFetchPhase({ jobId: "j", tracks: [track], store, http: cdn.http, signal: new AbortController().signal, sleep: noSleep, concurrency: 1, onBytes: (b) => seen.push(b) });
+    expect(seen[0]).toBe(64 * KB);
+    expect(seen.at(-1)).toBe(body.byteLength);
+    expect(Math.max(...seen)).toBe(body.byteLength);
+  });
+
   it("resumes after a failure and fetches only the missing chunks", async () => {
     const body = bytes(640 * KB, 7);
     const cdn = new FakeCdn().put("/v.mp4", { body, etag: '"e"' });

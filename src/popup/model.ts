@@ -4,7 +4,7 @@
  */
 import { ERROR_COPY, FrameSnapError, toAppError, type AppError } from "../core/errors";
 import { buildFilename } from "../core/filename";
-import { formatBytes } from "../core/format";
+import { formatBytes, formatSize, formatSpeed } from "../core/format";
 import type { JobPhase, JobRecord } from "../core/jobs/job";
 import { GIF_LOW_MEMORY_BYTES, gifWorkingSetBytes } from "../core/estimate";
 import type { DownloadOptions, GifOptions, VideoSource } from "../core/model";
@@ -27,6 +27,10 @@ export interface DownloadWarning {
 
 export interface DownloadDescription {
   estimate?: string;
+  /** Raw estimated output size, used to turn progress ratios into bytes. */
+  estimateBytes?: number;
+  /** "720p" for the chosen rendition, when known. */
+  heightLabel?: string;
   filename: string;
   warnings: DownloadWarning[];
   error?: AppError;
@@ -38,6 +42,8 @@ export function describeDownload(source: VideoSource, options: DownloadOptions, 
     const plan = planDownload(source, options);
     const est = plan.estimate;
     return {
+      estimateBytes: est?.bytes,
+      heightLabel: plan.height ? `${plan.height}p` : undefined,
       estimate: est ? `${est.confidence === "approx" ? "≈ " : ""}${formatBytes(est.bytes)}` : undefined,
       filename: buildFilename(options.filenameTemplate, { title: source.title, site: source.site, date, height: plan.height }, plan.output.extension),
       warnings: plan.warnings.map((code) => ({ code, text: WARNING_TEXT[code] })),
@@ -76,6 +82,12 @@ export interface JobView {
   error?: AppError;
   resumable?: boolean;
   keptRatio?: number;
+  /** Expected size of the download, when the plan could estimate it. */
+  totalBytes?: number;
+  /** Bytes held so far, when the worker reports them. */
+  doneBytes?: number;
+  /** Smoothed transfer rate in bytes per second, while fetching. */
+  speed?: number;
 }
 
 export type JobAction = "cancel" | "resume" | "retry";
@@ -86,6 +98,8 @@ export interface JobRowModel {
   label: string;
   percent: number;
   message?: string;
+  /** "6.4 MB of 18 MB · 1.2 MB/s": downloaded so far, total size and speed. */
+  detail?: string;
   actions: JobAction[];
   resumeLabel?: string;
 }
@@ -93,12 +107,21 @@ export interface JobRowModel {
 const PHASE_LABEL: Record<JobPhase, string> = { fetch: "Downloading", engine: "Converting", save: "Saving" };
 const pct = (r: number) => Math.round(Math.min(1, Math.max(0, r)) * 100);
 
+/** Downloaded / total / speed line for the fetch phase; parts the data cannot give are left out. */
+export function transferDetail(job: JobView): string | undefined {
+  const total = job.totalBytes;
+  const parts: string[] = [];
+  if (total && total > 0) parts.push(`${formatSize(job.doneBytes ?? Math.min(1, Math.max(0, job.ratio)) * total)} of ${formatSize(total)}`);
+  if (job.speed && job.speed > 0 && job.status === "running") parts.push(formatSpeed(job.speed));
+  return parts.length ? parts.join(" · ") : undefined;
+}
+
 export function jobRowModel(job: JobView): JobRowModel {
   const base = { jobId: job.jobId, title: job.title, percent: pct(job.ratio) };
   switch (job.status) {
     case "queued":
     case "running":
-      return { ...base, label: job.status === "queued" ? "Waiting" : PHASE_LABEL[job.phase], actions: ["cancel"] };
+      return { ...base, label: job.status === "queued" ? "Waiting" : PHASE_LABEL[job.phase], detail: job.phase === "fetch" ? transferDetail(job) : undefined, actions: ["cancel"] };
     case "done":
       return { ...base, percent: 100, label: "Saved", actions: [] };
     case "cancelled":

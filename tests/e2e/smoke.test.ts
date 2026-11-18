@@ -19,7 +19,7 @@ describe('extension in real Chrome', () => {
   it('lists the fixture video and downloads a byte-identical file', async () => {
     const page = await ext.visit(fx.pageUrl());
     const popup = await ext.openPopup(page);
-    await popup.getByRole('button', { name: 'Download', exact: true }).first().click();
+    await popup.getByRole('button', { name: 'Download video', exact: true }).first().click();
     const worker = await ext.getWorker();
     const file = await worker.evaluate(async () => {
       for (let i = 0; i < 100; i++) {

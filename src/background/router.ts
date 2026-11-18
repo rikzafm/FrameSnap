@@ -12,7 +12,7 @@ import {
 } from "../core/messages";
 import type { SourceRef } from "../core/jobs/source-ref";
 import { acceptsPicked } from "../core/jobs/source-ref";
-import type { VideoSource } from "../core/model";
+import type { OutputFormat, VideoSource } from "../core/model";
 
 export interface RouterDeps {
   sendToTab(tabId: number, message: WorkerToContent): Promise<unknown>;
@@ -32,7 +32,7 @@ export interface ContentDeps {
   /** A plain pick: the popup should select this source. */
   onPicked?(tabId: number, source: VideoSource): void | Promise<void>;
   /** An action-bar button on the picked video. */
-  onAction?(action: PickerAction, tabId: number, source: VideoSource): void | Promise<void>;
+  onAction?(action: PickerAction, tabId: number, source: VideoSource, format?: OutputFormat): void | Promise<void>;
   /** A captured frame, or a frame the page could not read. */
   onSnapData?(tabId: number, msg: Extract<ContentToWorker, { t: "snap/data" }>): void | Promise<void>;
   onSnapTainted?(tabId: number, msg: Extract<ContentToWorker, { t: "snap/tainted" }>): void | Promise<void>;
@@ -83,7 +83,9 @@ export async function routeContentMessage(
       return { accepted: true };
     }
     case "picker/action":
-      await deps.onAction?.(msg.action, sender.tabId, stamp(msg.source, sender.frameId));
+      await (msg.format
+        ? deps.onAction?.(msg.action, sender.tabId, stamp(msg.source, sender.frameId), msg.format)
+        : deps.onAction?.(msg.action, sender.tabId, stamp(msg.source, sender.frameId)));
       return undefined;
     case "snap/data":
       await deps.onSnapData?.(sender.tabId, msg);

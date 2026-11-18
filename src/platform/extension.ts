@@ -26,6 +26,7 @@ export const localSettings = {
 };
 
 export const manifest = {
+  version: (): string => chrome.runtime.getManifest().version,
   hostPermissions: (): string[] => chrome.runtime.getManifest().host_permissions ?? [],
   /** The files of the all-pages content script, for injecting it into an already open tab. */
   contentScriptFiles: (): string[] => chrome.runtime.getManifest().content_scripts?.[0]?.js ?? [],

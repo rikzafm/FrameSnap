@@ -79,8 +79,21 @@ function wireRadios(group: HTMLElement, vertical: boolean, onPick: (i: number) =
   });
 }
 
-export function segmented(labelId: string, choices: { value: string; label: string }[], value: string, onChange: (v: string) => void): HTMLElement {
-  const group = h("div", { class: "segmented", role: "radiogroup", "aria-labelledby": labelId });
+/** Static, trusted SVG markup as an inline decorative icon. */
+export function svgIcon(markup: string, cls = "icon"): HTMLElement {
+  const el = h("span", { class: cls, "aria-hidden": "true" });
+  el.innerHTML = markup;
+  return el;
+}
+
+export const ICONS = {
+  cursor: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M4 3l16 7-7 2.5L10 20z"/></svg>',
+  play: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>',
+  snap: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V6a2 2 0 0 1 2-2h3M15 4h3a2 2 0 0 1 2 2v3M20 15v3a2 2 0 0 1-2 2h-3M9 20H6a2 2 0 0 1-2-2v-3"/><circle cx="12" cy="12" r="3"/></svg>',
+};
+
+export function segmented(labelId: string, choices: { value: string; label: string }[], value: string, onChange: (v: string) => void, extraClass = ""): HTMLElement {
+  const group = h("div", { class: `segmented ${extraClass}`.trim(), role: "radiogroup", "aria-labelledby": labelId });
   for (const c of choices) {
     const on = c.value === value;
     group.append(h("button", { type: "button", role: "radio", class: "seg", "aria-checked": String(on), tabindex: on ? 0 : -1, "data-key": `seg-${c.value}`, onClick: () => onChange(c.value) }, c.label));
@@ -107,6 +120,7 @@ export function radioCards(labelText: string, items: { value: string; title: str
         { type: "button", role: "radio", class: "card", "aria-checked": String(on), tabindex: on ? 0 : -1, "data-key": `card-${it.value}`, onClick: () => onChange(it.value) },
         it.thumbnail ? h("img", { class: "thumb", src: it.thumbnail, alt: "" }) : h("span", { class: "thumb thumb-empty", "aria-hidden": "true" }),
         h("span", { class: "card-text" }, h("span", { class: "card-title" }, it.title), h("span", { class: "card-meta" }, it.meta)),
+        h("span", { class: "radio-dot", "aria-hidden": "true" }),
       ),
     );
   }

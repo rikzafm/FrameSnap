@@ -65,8 +65,9 @@ describe("DRM: fake-EME fixture", () => {
     expect(buttons().filter((b) => !b.disabled && !b.closest('[role="tablist"]'))).toEqual([]);
     expect(buttons().every((b) => b.disabled || b.getAttribute("role") === "tab")).toBe(true);
     expect(byText("Download")!.disabled).toBe(true);
-    expect(byText("Snap")!.disabled).toBe(true);
-    byText("Snap")!.click();
+    const snap = buttons().find((b) => b.getAttribute("aria-label") === "Snap frame")!;
+    expect(snap.disabled).toBe(true);
+    snap.click();
     byText("Download")!.click();
     expect(posted).toEqual([]);
     const res = await axe.run(root, { rules: { "color-contrast": { enabled: false }, region: { enabled: false } } });

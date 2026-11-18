@@ -96,7 +96,8 @@ describe("single video", () => {
     expect([...root.querySelectorAll('[role="tab"]')].map((t) => t.textContent)).toEqual(["Video", "GIF", "Screenshot"]);
     for (const label of ["Format", "Quality", "Audio", "Trim", "File name"]) expect(byText("label, .row-label", label)).toBeTruthy();
     expect(q(".filename-preview")!.textContent).toBe("Cat clip-reddit-720p.mp4");
-    expect(q(".estimate")!.textContent).toBe("84 MB");
+    expect(q(".summary .card-meta")!.textContent).toBe("720p · 84 MB");
+    expect(q(".summary .eyebrow")!.textContent).toBe("Detected · reddit");
     expect(await axeViolations()).toEqual([]);
   });
 
@@ -116,7 +117,7 @@ describe("single video", () => {
 
   it("snaps a frame", () => {
     make().handle({ t: "media/updated", tabId: 5, sources: [source("a", "Cat clip")] });
-    byText("button", "Snap")!.click();
+    q('button[aria-label="Snap frame"]')!.click();
     expect(posted).toContainEqual({ t: "snap/frame", tabId: 5, sourceId: "a" });
   });
 
@@ -190,6 +191,39 @@ describe("jobs", () => {
     expect(q(".job")!.textContent).toContain("The connection dropped");
     byText("button", "Resume (62 % kept)")!.click();
     expect(posted).toContainEqual({ t: "job/resume", jobId: "j1", tabId: 5 });
+  });
+});
+
+describe("download progress", () => {
+  const start = () => {
+    let clock = 1_000_000;
+    const popup = make({ now: () => new Date(clock) });
+    popup.handle({ t: "media/updated", tabId: 5, sources: [source("a", "Cat clip")] });
+    byText("button", "Download video")!.click();
+    popup.handle({ t: "job/event", event: { t: "queued", jobId: "j1" } });
+    return { popup, tick: (ms: number) => (clock += ms) };
+  };
+
+  it("shows how much is downloaded, the total size and the speed", () => {
+    const { popup, tick } = start();
+    popup.handle({ t: "job/event", event: { t: "progress", jobId: "j1", phase: "fetch", ratio: 0, bytes: 0, totalBytes: 84 * MB } });
+    tick(1000);
+    popup.handle({ t: "job/event", event: { t: "progress", jobId: "j1", phase: "fetch", ratio: 8 / 84, bytes: 8 * MB, totalBytes: 84 * MB } });
+    expect(q(".job-detail")!.textContent).toBe("8.0 MB of 84.0 MB · 8.0 MB/s");
+    expect(q(".job")!.textContent).toContain("10 %");
+  });
+
+  it("falls back to the plan's estimate when the worker sends no byte counts", () => {
+    const { popup } = start();
+    popup.handle({ t: "job/event", event: { t: "progress", jobId: "j1", phase: "fetch", ratio: 0.5 } });
+    expect(q(".job-detail")!.textContent).toBe("42.0 MB of 84.0 MB");
+  });
+
+  it("drops the transfer line once the job is converting", () => {
+    const { popup } = start();
+    popup.handle({ t: "job/event", event: { t: "progress", jobId: "j1", phase: "engine", ratio: 0.2 } });
+    expect(q(".job-detail")).toBeNull();
+    expect(q(".job")!.textContent).toContain("Converting");
   });
 });
 

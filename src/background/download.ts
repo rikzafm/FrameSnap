@@ -661,7 +661,7 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
         jobs.commitChunks(a.id, [{ trackId: m.trackId, key: m.key }]);
         return;
       case "engine/progress":
-        deps.emit({ t: "progress", jobId: a.id, phase: m.phase, ratio: m.ratio });
+        deps.emit({ t: "progress", jobId: a.id, phase: m.phase, ratio: m.ratio, ...(m.bytes !== undefined ? { bytes: m.bytes } : {}), ...(m.totalBytes !== undefined ? { totalBytes: m.totalBytes } : {}) });
         return;
       case "engine/fetched":
         a.busy = undefined;

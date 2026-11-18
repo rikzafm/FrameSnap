@@ -47,7 +47,7 @@ export type EngineToWorker =
   /** Sent on connect and after `engine/storage`. */
   | { t: "engine/ready"; storage: StorageReport }
   | { t: "engine/commit"; jobId: string; trackId: string; key: string; bytes: number }
-  | { t: "engine/progress"; jobId: string; phase: "fetch" | "engine"; ratio: number }
+  | { t: "engine/progress"; jobId: string; phase: "fetch" | "engine"; ratio: number; /** Fetch only: bytes held so far and the known total. */ bytes?: number; totalBytes?: number }
   /** Fetch phase finished. `resumable: false` = the store fell back to memory. */
   | { t: "engine/fetched"; jobId: string; resumable: boolean }
   | { t: "engine/result"; jobId: string; url: string; bytes: number; mime: string }
@@ -102,7 +102,7 @@ export function isEngineToWorker(x: unknown): x is EngineToWorker {
     case "engine/commit":
       return str(x.jobId) && str(x.trackId) && str(x.key) && num(x.bytes);
     case "engine/progress":
-      return str(x.jobId) && (x.phase === "fetch" || x.phase === "engine") && num(x.ratio);
+      return str(x.jobId) && (x.phase === "fetch" || x.phase === "engine") && num(x.ratio) && (x.bytes === undefined || num(x.bytes)) && (x.totalBytes === undefined || num(x.totalBytes));
     case "engine/fetched":
       return str(x.jobId) && typeof x.resumable === "boolean";
     case "engine/result":

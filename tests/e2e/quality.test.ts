@@ -50,7 +50,7 @@ describe('performance budgets (spec section 9)', () => {
       const popup = await ext.openPopup(page);
       const started = Date.now();
       await popup
-        .getByRole('button', { name: 'Download', exact: true })
+        .getByRole('button', { name: 'Download video', exact: true })
         .first()
         .waitFor({ timeout: 5000 });
       times.list.push(Date.now() - started);
@@ -88,7 +88,7 @@ describe('accessibility (axe-core)', () => {
   it('popup with a listed video has no violations', async () => {
     const page = await ext.visit(fx.pageUrl());
     const popup = await ext.openPopup(page);
-    await popup.getByRole('button', { name: 'Download', exact: true }).first().waitFor();
+    await popup.getByRole('button', { name: 'Download video', exact: true }).first().waitFor();
     expect(await axeViolations(popup)).toEqual([]);
   });
 
@@ -96,7 +96,7 @@ describe('accessibility (axe-core)', () => {
     const page = await ext.visit(fx.pageUrl());
     const popup = await ext.openPopup(page);
     await popup.emulateMedia({ colorScheme: 'dark' });
-    await popup.getByRole('button', { name: 'Download', exact: true }).first().waitFor();
+    await popup.getByRole('button', { name: 'Download video', exact: true }).first().waitFor();
     expect(await axeViolations(popup)).toEqual([]);
   });
 

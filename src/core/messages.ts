@@ -4,7 +4,7 @@
  */
 import type { AppError } from "./errors";
 import type { JobPhase, JobRecord } from "./jobs/job";
-import type { DownloadOptions, GifOptions, VideoSource } from "./model";
+import type { DownloadOptions, GifOptions, OutputFormat, VideoSource } from "./model";
 import type { Rect, SnapFormat, SnapOptions } from "./snap";
 
 export type PopupToWorker =
@@ -30,7 +30,7 @@ export type WorkerToPopup =
 
 export type JobEvent =
   | { t: "queued"; jobId: string }
-  | { t: "progress"; jobId: string; phase: JobPhase; ratio: number; bytes?: number }
+  | { t: "progress"; jobId: string; phase: JobPhase; ratio: number; bytes?: number; totalBytes?: number }
   | { t: "done"; jobId: string; downloadId: number; filename: string }
   | { t: "failed"; jobId: string; error: AppError; resumable: boolean; keptRatio: number }
   | { t: "cancelled"; jobId: string }
@@ -61,12 +61,13 @@ export type WorkerToContent =
 
 export type CaptureKind = "mse-capture" | "recorder";
 
+export const PICKER_FORMATS: readonly string[] = ["mp4", "webm", "mkv", "mov", "mp3", "m4a"];
 export type PickerAction = "download" | "gif" | "snap";
 
 export type ContentToWorker =
   | { t: "dom/report"; sources: VideoSource[]; frameUrl: string }
   | { t: "picker/picked"; source: VideoSource; resumeJobId?: string }
-  | { t: "picker/action"; action: PickerAction; source: VideoSource }
+  | { t: "picker/action"; action: PickerAction; source: VideoSource; /** Download only: the format picked from the action bar menu. */ format?: OutputFormat }
   | { t: "snap/data"; dataUrl: string; width: number; height: number; time: number; title: string; site?: string; format?: SnapFormat }
   /** The frame could not be read: ask the worker for a cropped tab capture instead. */
   | { t: "snap/tainted"; rect: Rect; dpr: number; time: number; title: string; site?: string; format: SnapFormat; quality: number }
@@ -149,7 +150,7 @@ export function isJobEvent(x: unknown): x is JobEvent {
     case "notice":
       return x.code === "changed";
     case "progress":
-      return typeof x.phase === "string" && PHASES.has(x.phase) && num(x.ratio) && (x.bytes === undefined || num(x.bytes));
+      return typeof x.phase === "string" && PHASES.has(x.phase) && num(x.ratio) && (x.bytes === undefined || num(x.bytes)) && (x.totalBytes === undefined || num(x.totalBytes));
     case "done":
       return num(x.downloadId) && str(x.filename);
     case "gif-ready":
@@ -219,7 +220,7 @@ export function isContentToWorker(x: unknown): x is ContentToWorker {
     case "picker/picked":
       return isVideoSource(x.source) && (x.resumeJobId === undefined || str(x.resumeJobId));
     case "picker/action":
-      return (x.action === "download" || x.action === "gif" || x.action === "snap") && isVideoSource(x.source);
+      return (x.action === "download" || x.action === "gif" || x.action === "snap") && isVideoSource(x.source) && (x.format === undefined || (typeof x.format === "string" && PICKER_FORMATS.includes(x.format)));
     case "snap/data":
       return typeof x.dataUrl === "string" && num(x.width) && num(x.height) && num(x.time) && typeof x.title === "string";
     case "snap/tainted":
