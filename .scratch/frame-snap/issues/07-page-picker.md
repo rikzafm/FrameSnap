@@ -1,6 +1,6 @@
 # 07 — In-page picker overlay and action bar
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 04
 Spec: ../spec.md §6.6 (pick fallback); source §5 mockup B; decision Q6
 
