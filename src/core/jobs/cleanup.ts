@@ -5,6 +5,9 @@
 import type { JobRecord } from "./job";
 import type { StoredJob } from "./store";
 
+/** The part of a record the policy reads (so the sweep can ship it across the engine port). */
+export type SweepRecord = Pick<JobRecord, "id" | "status" | "resumable" | "updatedAt">;
+
 export const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 export const MAX_STORE_BYTES = 4 * 1024 * 1024 * 1024;
 
@@ -13,7 +16,7 @@ export function storeCap(quotaBytes: number | undefined): number {
   return Math.min(MAX_STORE_BYTES, Math.floor((quotaBytes ?? MAX_STORE_BYTES * 2) / 2));
 }
 
-export function selectEvictions(stored: readonly StoredJob[], records: readonly JobRecord[], now: number, capBytes: number): string[] {
+export function selectEvictions(stored: readonly StoredJob[], records: readonly SweepRecord[], now: number, capBytes: number): string[] {
   const byId = new Map(records.map((r) => [r.id, r]));
   const evict = new Set<string>();
 

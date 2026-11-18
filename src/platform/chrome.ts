@@ -17,6 +17,7 @@ export const tabs = {
     (frameId === undefined ? chrome.tabs.sendMessage(tabId, message) : chrome.tabs.sendMessage(tabId, message, { frameId })) as Promise<T>,
   query: (q: chrome.tabs.QueryInfo) => chrome.tabs.query(q),
   get: (tabId: number) => chrome.tabs.get(tabId),
+  create: (p: chrome.tabs.CreateProperties) => chrome.tabs.create(p),
   onRemoved: chrome.tabs.onRemoved,
   onUpdated: chrome.tabs.onUpdated,
 };

@@ -6,6 +6,8 @@ import { requestSiteAccess, originPattern } from "../../src/platform/site-access
 import { parseMaster, parseMedia } from "../../src/core/media/hls";
 import { parseMpd } from "../../src/core/media/dash";
 import type { VideoSource } from "../../src/core/model";
+import type { JobRecord } from "../../src/core/jobs/job";
+import { canonicalPageUrl } from "../../src/core/jobs/source-ref";
 import type { WorkerToPopup } from "../../src/core/messages";
 import * as fx from "../fixtures/hls-page";
 import * as xfx from "../fixtures/x-graphql";
@@ -76,7 +78,7 @@ describe("tab registry", () => {
   });
 });
 
-function setup(files: Record<string, string>, domReport?: VideoSource[], tabUrl: string = fx.PAGE_URL) {
+function setup(files: Record<string, string>, domReport?: VideoSource[], tabUrl: string = fx.PAGE_URL, jobs?: JobRecord[]) {
   const registry = createTabRegistry(memorySession());
   const sniffer = createSniffer();
   const fetched: string[] = [];
@@ -86,6 +88,7 @@ function setup(files: Record<string, string>, domReport?: VideoSource[], tabUrl:
     sniffer,
     getTab: async () => ({ url: tabUrl, title: "Intro clip" }),
     scanDom: async () => domReport,
+    ...(jobs ? { jobs: { list: async () => jobs } } : {}),
     adapterContext: {
       fetchText: async (url) => {
         fetched.push(url);
@@ -117,6 +120,16 @@ describe("media service", () => {
     expect(cached!.sources[0]!.variants.map((v) => v.height)).toEqual([undefined]); // placeholder, not yet expanded
     expect(refreshed!.sources[0]!.variants.map((v) => v.height)).toEqual([720, 360]);
     expect(refreshed!.selectedId).toBe(refreshed!.sources[0]!.id);
+  });
+
+  it("popup open: replies carry this page's resumable failed jobs, matched by canonical URL", async () => {
+    const job = (id: string, over: Partial<JobRecord>, pageUrl: string) =>
+      ({ id, status: "failed", resumable: true, updatedAt: 1, source: { pageUrl } as JobRecord["source"], ...over }) as JobRecord;
+    const here = canonicalPageUrl(fx.PAGE_URL);
+    const jobs = [job("a", {}, here), job("b", { resumable: false }, here), job("c", {}, "https://other.test/x"), job("d", { status: "done" }, here)];
+    const t = setup(files, [], fx.PAGE_URL + "?utm_source=share#t=5", jobs);
+    await t.service.openPopup(5, t.post);
+    for (const m of t.posted as Extract<WorkerToPopup, { t: "media/updated" }>[]) expect((m.resumable ?? []).map((j) => j.id)).toEqual(["a"]);
   });
 
   it("does not refetch a manifest that is already expanded", async () => {

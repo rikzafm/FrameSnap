@@ -4,7 +4,7 @@
  * ffmpeg, in-memory job storage, and recording fakes for chrome.downloads and
  * declarativeNetRequest.
  */
-import { createDownloadOrchestrator, type DownloadDelta, type HistoryEntry } from "../../src/background/download";
+import { createDownloadOrchestrator, type DownloadDeps, type DownloadDelta, type HistoryEntry } from "../../src/background/download";
 import { createJobStore, type StorageAreaLike } from "../../src/background/job-store";
 import { createEngineLifecycle } from "../../src/background/engine-lifecycle";
 import type { WorkerToEngine } from "../../src/core/engine-messages";
@@ -77,7 +77,7 @@ export interface Saved {
   blob?: Blob;
 }
 
-export function createHarness(opts: { sources?: VideoSource[]; files?: Record<string, string> } = {}) {
+export function createHarness(opts: { sources?: VideoSource[]; files?: Record<string, string>; deps?: Partial<DownloadDeps> } = {}) {
   const cdn = new FakeCdn();
   const backend = new ConcatBackend();
   const store = new MemoryChunkStore();
@@ -194,6 +194,7 @@ export function createHarness(opts: { sources?: VideoSource[]; files?: Record<st
     emit: (e) => events.push(e),
     now: () => (clock += 10),
     newId: () => `job${++ids}`,
+    ...opts.deps,
   });
 
   return {
