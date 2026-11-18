@@ -14,6 +14,8 @@ export interface DomDetectorOptions {
   frameUrl: string;
   emit: (sources: VideoSource[]) => void;
   debounceMs?: number;
+  /** Extra variants for a blob: video (MSE capture, recorder). */
+  blobVariants?: (video: HTMLVideoElement, src: string, elementKey: string) => Variant[];
 }
 
 export interface DomDetector {
@@ -23,6 +25,8 @@ export interface DomDetector {
   start(): void;
   stop(): void;
   resolve(elementKey: string): HTMLVideoElement | undefined;
+  /** Re-report soon (a blob capture became available). */
+  refresh(): void;
 }
 
 const THUMB_WIDTH = 160;
@@ -115,6 +119,7 @@ export function createDomDetector(opts: DomDetectorOptions): DomDetector {
         hasAudio: true,
       });
     }
+    if (src.startsWith("blob:")) variants.push(...(opts.blobVariants?.(v, src, elementKey) ?? []));
     const source: VideoSource = {
       id: `dom:${fnv1a(src || frameUrl + elementKey)}`,
       site: "generic",
@@ -175,5 +180,6 @@ export function createDomDetector(opts: DomDetectorOptions): DomDetector {
       timer = undefined;
     },
     resolve: (k) => byKey.get(k)?.deref(),
+    refresh: schedule,
   };
 }

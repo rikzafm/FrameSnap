@@ -5,7 +5,9 @@ import type { DownloadOptions, VideoSource } from "../core/model";
 import { parseMaster, parseMedia } from "../core/media/hls";
 import { parseMpd } from "../core/media/dash";
 import { ENGINE_PORT, parsePopupPortName } from "../platform/ports";
-import { downloads, dnr, offscreen, runtime, session, storage, tabs, webRequest } from "../platform/chrome";
+import { downloads, dnr, offscreen, permissions, runtime, scripting, session, storage, tabs, webRequest } from "../platform/chrome";
+import mseHookFile from "../main-world/mse-main?script";
+import { grantedOptionalOrigins, syncMseScripts } from "../platform/mse-scripts";
 import { settingsStore } from "../platform/settings-store";
 import { createDownloadOrchestrator } from "./download";
 import { createEngineLifecycle } from "./engine-lifecycle";
@@ -78,6 +80,7 @@ const orchestrator = createDownloadOrchestrator({
   fetch: (url, init) => fetch(url, init),
   parseMedia,
   parseMpd,
+  capture: { send: (tabId, frameId, msg) => tabs.sendMessage(tabId, msg, frameId).then(() => undefined) },
   lookupSource: async (tabId, sourceId) => (await registry.list(tabId)).find((s) => s.id === sourceId),
   history,
   emit: (event) => broadcast({ t: "job/event", event }),
@@ -85,11 +88,30 @@ const orchestrator = createDownloadOrchestrator({
 
 downloads.onChanged.addListener((delta) => orchestrator.onDownloadChanged(delta));
 
+// MSE capture hook: registered at document_start only for sites the user granted at runtime.
+async function syncMseHook(): Promise<void> {
+  const granted = (await permissions.getAll()).origins ?? [];
+  const builtIn = chrome.runtime.getManifest().host_permissions ?? [];
+  await syncMseScripts(
+    {
+      getRegistered: (filter) => scripting.getRegisteredContentScripts(filter),
+      register: (s) => scripting.registerContentScripts(s),
+      update: (s) => scripting.updateContentScripts(s as chrome.scripting.RegisteredContentScript[]),
+      unregister: (filter) => scripting.unregisterContentScripts(filter),
+    },
+    mseHookFile,
+    grantedOptionalOrigins(granted, builtIn),
+  );
+}
+void syncMseHook().catch(() => undefined);
+permissions.onAdded.addListener(() => void syncMseHook().catch(() => undefined));
+permissions.onRemoved.addListener(() => void syncMseHook().catch(() => undefined));
+
 /** Prefer the registry's copy (manifests expanded) over the picker's snapshot. */
 async function startPickedDownload(tabId: number, picked: VideoSource): Promise<void> {
   const source = (await registry.list(tabId)).find((s) => s.id === picked.id) ?? picked;
   const settings = await settingsStore().get();
-  await orchestrator.start(source, { format: settings.defaultFormat, quality: "best", audio: "keep", filenameTemplate: settings.filenameTemplate });
+  await orchestrator.start(source, { format: settings.defaultFormat, quality: "best", audio: "keep", filenameTemplate: settings.filenameTemplate }, { tabId });
 }
 
 webRequest.onHeadersReceived.addListener(
@@ -149,6 +171,10 @@ runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
   if (!isContentToWorker(raw) || sender.tab?.id === undefined) return false;
   if (raw.t === "dom/report") {
     void media.onDomReport(sender.tab.id, sender.frameId ?? 0, raw.sources).catch(() => undefined);
+    return false;
+  }
+  if (raw.t === "capture/progress" || raw.t === "capture/result" || raw.t === "capture/error") {
+    void orchestrator.onCaptureMessage(raw).catch(() => undefined);
     return false;
   }
   if (raw.t === "net/tap") {

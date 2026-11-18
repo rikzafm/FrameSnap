@@ -46,7 +46,14 @@ export type WorkerToContent =
   | { t: "snap/burst"; elementKey?: string; intervalSec: number; options: SnapOptions }
   | { t: "snap/burst-stop" }
   /** Outcome to show as a toast. */
-  | { t: "snap/result"; kind: "saved" | "tainted" | "error"; text: string };
+  | { t: "snap/result"; kind: "saved" | "tainted" | "error"; text: string }
+  /** Capture route (blob: sources). Sent to one frame. `durationSec` bounds a recorder capture. */
+  | { t: "capture/start"; jobId: string; kind: CaptureKind; elementKey: string; streamId?: string; durationSec?: number }
+  | { t: "capture/cancel"; jobId: string }
+  /** The saved file's blob: URL can be freed. */
+  | { t: "capture/revoke"; url: string };
+
+export type CaptureKind = "mse-capture" | "recorder";
 
 export type PickerAction = "download" | "gif" | "snap";
 
@@ -59,7 +66,12 @@ export type ContentToWorker =
   | { t: "snap/tainted"; rect: Rect; dpr: number; time: number; title: string; site?: string; format: SnapFormat; quality: number }
   | { t: "demo/pong"; nonce: string; reply: string }
   /** JSON captured by the main-world network tap (X GraphQL). */
-  | { t: "net/tap"; payload: unknown; frameUrl: string };
+  | { t: "net/tap"; payload: unknown; frameUrl: string }
+  | { t: "capture/progress"; jobId: string; ratio: number }
+  | { t: "capture/result"; jobId: string; url: string; bytes: number; mime: string; container: "mp4" | "webm"; hasAudio: boolean }
+  | { t: "capture/error"; jobId: string; error: AppError };
+
+export type CaptureEvent = Extract<ContentToWorker, { t: "capture/progress" | "capture/result" | "capture/error" }>;
 
 function isObj(x: unknown): x is Record<string, unknown> {
   return typeof x === "object" && x !== null;
@@ -158,6 +170,18 @@ export function isWorkerToContent(x: unknown): x is WorkerToContent {
       return (x.kind === "saved" || x.kind === "tainted" || x.kind === "error") && typeof x.text === "string";
     case "demo/ping":
       return str(x.nonce);
+    case "capture/start":
+      return (
+        str(x.jobId) &&
+        (x.kind === "mse-capture" || x.kind === "recorder") &&
+        str(x.elementKey) &&
+        (x.streamId === undefined || str(x.streamId)) &&
+        (x.durationSec === undefined || num(x.durationSec))
+      );
+    case "capture/cancel":
+      return str(x.jobId);
+    case "capture/revoke":
+      return str(x.url);
     case "picker/start":
       return (x.resumeJobId === undefined || str(x.resumeJobId)) && (x.resumeTitle === undefined || typeof x.resumeTitle === "string");
     default:
@@ -180,6 +204,12 @@ export function isContentToWorker(x: unknown): x is ContentToWorker {
       return isRect(x.rect) && num(x.dpr) && num(x.time) && typeof x.title === "string" && (x.format === "png" || x.format === "jpeg" || x.format === "webp") && num(x.quality);
     case "net/tap":
       return isObj(x.payload) && str(x.frameUrl);
+    case "capture/progress":
+      return str(x.jobId) && num(x.ratio);
+    case "capture/result":
+      return str(x.jobId) && str(x.url) && num(x.bytes) && typeof x.mime === "string" && (x.container === "mp4" || x.container === "webm") && typeof x.hasAudio === "boolean";
+    case "capture/error":
+      return str(x.jobId) && isObj(x.error) && typeof x.error.code === "string";
     case "demo/pong":
       return str(x.nonce) && typeof x.reply === "string";
     default:
