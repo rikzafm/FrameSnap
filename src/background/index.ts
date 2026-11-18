@@ -1,10 +1,17 @@
-import { isContentToWorker, isPopupToWorker } from "../core/messages";
+import { isEngineToWorker } from "../core/engine-messages";
+import { isContentToWorker, isPopupToWorker, type WorkerToPopup } from "../core/messages";
 import type { JobRecord } from "../core/jobs/job";
+import type { DownloadOptions, VideoSource } from "../core/model";
 import { parseMaster, parseMedia } from "../core/media/hls";
 import { parseMpd } from "../core/media/dash";
-import { parsePopupPortName } from "../platform/ports";
-import { runtime, session, storage, tabs, webRequest } from "../platform/chrome";
-import { jobKey } from "./job-store";
+import { ENGINE_PORT, parsePopupPortName } from "../platform/ports";
+import { downloads, dnr, offscreen, runtime, session, storage, tabs, webRequest } from "../platform/chrome";
+import { settingsStore } from "../platform/settings-store";
+import { createDownloadOrchestrator } from "./download";
+import { createEngineLifecycle } from "./engine-lifecycle";
+import { createEngineLink } from "./engine-link";
+import { createHistoryStore } from "./history";
+import { createJobStore, jobKey } from "./job-store";
 import { createMediaService } from "./media-service";
 import { createTabRegistry } from "./registry";
 import { createSniffer } from "./sniffer";
@@ -19,8 +26,10 @@ async function resumeRef(jobId: string) {
 /** Key the popup reads on open: which tab and source the picker asked for. */
 export const PICKER_SELECTION_KEY = "pickerSelection";
 
+const registry = createTabRegistry(session.area);
+
 const media = createMediaService({
-  registry: createTabRegistry(session.area),
+  registry,
   sniffer: createSniffer(),
   getTab: (tabId) => tabs.get(tabId).catch(() => undefined),
   scanDom: async (tabId) => {
@@ -39,6 +48,46 @@ const media = createMediaService({
   },
 });
 
+// ---- downloads -----------------------------------------------------------------
+
+const popupPorts = new Set<chrome.runtime.Port>();
+const broadcast = (m: WorkerToPopup) => {
+  for (const p of popupPorts) {
+    try {
+      p.postMessage(m);
+    } catch {
+      popupPorts.delete(p);
+    }
+  }
+};
+
+const lifecycle = createEngineLifecycle({ api: offscreen, url: "src/offscreen/index.html" });
+const engineLink = createEngineLink({ ensure: () => lifecycle.ensure() });
+const history = createHistoryStore(storage.local);
+
+const orchestrator = createDownloadOrchestrator({
+  jobs: createJobStore({ area: storage.local }),
+  engine: engineLink,
+  lifecycle,
+  downloads,
+  dnr,
+  fetch: (url, init) => fetch(url, init),
+  parseMedia,
+  parseMpd,
+  lookupSource: async (tabId, sourceId) => (await registry.list(tabId)).find((s) => s.id === sourceId),
+  history,
+  emit: (event) => broadcast({ t: "job/event", event }),
+});
+
+downloads.onChanged.addListener((delta) => orchestrator.onDownloadChanged(delta));
+
+/** Prefer the registry's copy (manifests expanded) over the picker's snapshot. */
+async function startPickedDownload(tabId: number, picked: VideoSource): Promise<void> {
+  const source = (await registry.list(tabId)).find((s) => s.id === picked.id) ?? picked;
+  const settings = await settingsStore().get();
+  await orchestrator.start(source, { format: settings.defaultFormat, quality: "best", audio: "keep", filenameTemplate: settings.filenameTemplate });
+}
+
 webRequest.onHeadersReceived.addListener(
   (d) => {
     void media.onResponse(d).catch(() => undefined);
@@ -55,11 +104,32 @@ tabs.onUpdated.addListener((tabId, info) => {
 tabs.onRemoved.addListener((tabId) => void media.onRemoved(tabId).catch(() => undefined));
 
 runtime.onConnect.addListener((port) => {
+  if (port.name === ENGINE_PORT) {
+    engineLink.attach(port);
+    port.onMessage.addListener((raw: unknown) => {
+      if (isEngineToWorker(raw)) void orchestrator.onEngineMessage(raw);
+    });
+    port.onDisconnect.addListener(() => {
+      engineLink.detach(port);
+      void orchestrator.onEngineDisconnect();
+    });
+    return;
+  }
   if (parsePopupPortName(port.name) === undefined) return;
+  popupPorts.add(port);
+  port.onDisconnect.addListener(() => popupPorts.delete(port));
   port.onMessage.addListener((raw: unknown) => {
     if (!isPopupToWorker(raw)) return;
     if (raw.t === "media/list") {
       void media.openPopup(raw.tabId, (m) => port.postMessage(m)).catch(() => undefined);
+      return;
+    }
+    if (raw.t === "job/download") {
+      void orchestrator.download({ tabId: raw.tabId, sourceId: raw.sourceId, options: raw.options as DownloadOptions }).catch(() => undefined);
+      return;
+    }
+    if (raw.t === "job/cancel") {
+      void orchestrator.cancel(raw.jobId).catch(() => undefined);
       return;
     }
     void routePopupMessage(raw, { sendToTab: (tabId, m) => tabs.sendMessage(tabId, m), resumeRef })
@@ -71,7 +141,16 @@ runtime.onConnect.addListener((port) => {
 });
 
 runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
-  if (!isContentToWorker(raw) || (raw.t !== "picker/picked" && raw.t !== "picker/action") || sender.tab?.id === undefined) return false;
+  if (!isContentToWorker(raw) || sender.tab?.id === undefined) return false;
+  if (raw.t === "dom/report") {
+    void media.onDomReport(sender.tab.id, sender.frameId ?? 0, raw.sources).catch(() => undefined);
+    return false;
+  }
+  if (raw.t === "net/tap") {
+    void media.onTap(sender.tab.id, raw.payload).catch(() => undefined);
+    return false;
+  }
+  if (raw.t !== "picker/picked" && raw.t !== "picker/action") return false;
   const from = { tabId: sender.tab.id, frameId: sender.frameId ?? 0 };
   void routeContentMessage(raw, from, {
     resumeRef,
@@ -81,7 +160,8 @@ runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
       await storage.local.set({ [PICKER_SELECTION_KEY]: { tabId, sourceId: source.id, tab: "list" } });
     },
     onAction: async (action, tabId, source) => {
-      if (action !== "gif") return; // download and snap are wired by their own tickets
+      if (action === "download") return startPickedDownload(tabId, source);
+      if (action !== "gif") return; // snap is wired by its own ticket
       await storage.local.set({ [PICKER_SELECTION_KEY]: { tabId, sourceId: source.id, tab: "gif" } });
       await chrome.action.openPopup().catch(() => undefined);
     },
