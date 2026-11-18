@@ -15,6 +15,8 @@ const SITE_HOSTS = [
   '*://media.discordapp.net/*',
 ];
 
+const X_MATCHES = ['*://*.x.com/*', '*://*.twitter.com/*'];
+
 const YOUTUBE_HOSTS = ['*://*.youtube.com/*', '*://*.googlevideo.com/*'];
 
 export function buildManifest({ youtube }: ManifestOptions) {
@@ -49,6 +51,18 @@ export function buildManifest({ youtube }: ManifestOptions) {
         run_at: 'document_idle' as const,
         all_frames: true,
         match_origin_as_fallback: true,
+      },
+      // X network tap: main-world fetch/XHR wrapper plus its isolated-world bridge.
+      {
+        matches: X_MATCHES,
+        js: ['src/main-world/net-tap-main.ts'],
+        run_at: 'document_start' as const,
+        world: 'MAIN' as const,
+      },
+      {
+        matches: X_MATCHES,
+        js: ['src/main-world/bridge.ts'],
+        run_at: 'document_start' as const,
       },
     ],
     permissions: [
