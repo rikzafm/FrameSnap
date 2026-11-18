@@ -47,6 +47,8 @@ export function buildManifest({ youtube }: ManifestOptions) {
         matches: ['<all_urls>'],
         js: ['src/content/index.ts'],
         run_at: 'document_idle' as const,
+        all_frames: true,
+        match_origin_as_fallback: true,
       },
     ],
     permissions: [
