@@ -6,6 +6,7 @@
  * page clicks; `cancel()` removes every listener, so page handlers fire
  * normally afterwards.
  */
+import { ERROR_COPY } from "../core/errors";
 import type { ContentToWorker, PickerAction } from "../core/messages";
 import type { VideoSource } from "../core/model";
 import type { DomDetector } from "./dom-detect";
@@ -51,6 +52,9 @@ const CSS = `
 .bar { position: absolute; display: flex; gap: 8px; padding: 8px; background: #1d1b17; border-radius: 8px; pointer-events: auto; }
 .bar button { background: #faf8f3; color: #1d1b17; border: 0; padding: 6px 12px; }
 .bar button.primary { background: #c23a08; color: #faf8f3; }
+.bar button:disabled { opacity: 0.45; cursor: not-allowed; }
+.bar { flex-wrap: wrap; max-width: 360px; }
+.bar .note { flex-basis: 100%; margin: 0; color: #faf8f3; }
 button:focus-visible { outline: 2px solid #faf8f3; outline-offset: 2px; }
 `;
 
@@ -139,8 +143,17 @@ export function createPicker(opts: PickerOptions): Picker {
       ["gif", "GIF", false],
       ["snap", "Snap frame", false],
     ];
+    const locked = selected.source.protection === "drm";
+    if (locked) {
+      const note = doc.createElement("p");
+      note.className = "note";
+      note.setAttribute("role", "alert");
+      note.textContent = ERROR_COPY.drm.message;
+      bar.append(note);
+    }
     for (const [action, label, primary] of buttons) {
       const b = doc.createElement("button");
+      b.disabled = locked;
       b.type = "button";
       b.dataset.action = action;
       b.textContent = label;

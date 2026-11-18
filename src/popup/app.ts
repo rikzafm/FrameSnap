@@ -5,13 +5,14 @@
  */
 import type { JobRecord } from "../core/jobs/job";
 import type { WorkerToPopup, PopupToWorker } from "../core/messages";
-import { ERROR_COPY } from "../core/errors";
+import { ERROR_COPY, type ErrorCode } from "../core/errors";
 import { resolveDefaultQuality } from "../core/settings";
 import type { AudioMode, DownloadOptions, OutputFormat, VideoSource } from "../core/model";
 import type { SiteAccessResult } from "../platform/site-access";
 import { BURST_CAP, DEFAULT_SNAP_OPTIONS, type SnapFormat, type SnapOptions } from "../core/snap";
 import { button, h, iconButton, nextId, progress, radioCards, segmented, selectRow, switchControl, tabs, toast } from "../ui/components";
 import type { Mode } from "./mode-memory";
+import { errorNotice, errorToast, type ErrorHandlers } from "../ui/error-notice";
 import { describeDownload, jobRowModel, qualityChoices, resumeBanner, type JobView } from "./model";
 
 export interface PopupDeps {
@@ -71,6 +72,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     resumable: [] as JobRecord[],
     bannerOpen: false,
     toast: undefined as string | undefined,
+    toastError: undefined as ErrorCode | undefined,
     snap: deps.snap?.options ?? DEFAULT_SNAP_OPTIONS,
     burstEvery: 5,
     bursting: false,
@@ -78,16 +80,39 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
   const selected = () => s.sources.find((x) => x.id === s.selectedId) ?? s.sources[0];
 
-  function showToast(text: string) {
+  function showToast(text: string, error?: ErrorCode) {
     s.toast = text;
+    s.toastError = error;
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
       s.toast = undefined;
+      s.toastError = undefined;
       render();
-    }, 4000);
+    }, error ? 8000 : 4000);
   }
 
   const quality = (src: VideoSource): string => s.quality ?? resolveDefaultQuality(src, deps.defaults.quality ?? "best");
+
+  function grantAccess() {
+    void deps.requestAccess().then((r) => {
+      s.remembered = r === "granted" || r === "already";
+      if (r === "denied") showToast(ERROR_COPY.permission.message, "permission");
+      render("remember");
+    });
+  }
+
+  /** Switch to the next lower rendition than the current choice (or the lowest one). */
+  function chooseLowerQuality(src: VideoSource) {
+    const variants = qualityChoices(src).slice(1);
+    const cur = quality(src);
+    const at = cur === "best" ? 0 : variants.findIndex((c) => c.value === cur);
+    const next = variants[Math.min(variants.length - 1, at + 1)];
+    if (next) s.quality = next.value;
+    s.selectedId = src.id;
+    render();
+  }
+
+  const isBlocked = (src: VideoSource) => src.protection === "drm";
 
   function options(src: VideoSource): DownloadOptions {
     const o: DownloadOptions = { format: s.format, quality: quality(src), audio: s.audio, filenameTemplate: s.template };
@@ -187,7 +212,10 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
       ),
     );
     if (d.error) panel.append(h("p", { class: "warning", role: "alert" }, ERROR_COPY[d.error.code].message));
-    for (const w of d.warnings) panel.append(h("p", { class: "warning", role: "status" }, w.text));
+    for (const w of d.warnings) {
+      if (w.code === "too-large") panel.append(errorNotice("too-large", { "lower-quality": () => chooseLowerQuality(src) }));
+      else panel.append(h("p", { class: "warning", role: "status" }, w.text));
+    }
     return panel;
   }
 
@@ -197,12 +225,14 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
   }
 
   function actions(src: VideoSource, withDownload: boolean): HTMLElement {
-    const blocked = describeDownload(src, options(src), deps.now()).error !== undefined;
+    const d = describeDownload(src, options(src), deps.now());
+    const protectedVideo = isBlocked(src);
+    const blocked = d.error !== undefined || d.warnings.some((w) => w.code === "too-large");
     return h(
       "div",
       { class: "actions actions-main" },
       withDownload ? button("Download", () => startDownload(src, options(src)), { variant: "primary", disabled: blocked, key: "download" }) : undefined,
-      button("Snap", () => deps.post({ t: "snap/frame", tabId: deps.tab.id, sourceId: src.id }), { key: "snap" }),
+      button("Snap", () => deps.post({ t: "snap/frame", tabId: deps.tab.id, sourceId: src.id }), { key: "snap", disabled: protectedVideo }),
     );
   }
 
@@ -265,7 +295,13 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     );
   }
 
+  /** Protected video: listed, explained, and nothing can be started. Never tries to get around it. */
+  function protectedPanel(src: VideoSource): HTMLElement {
+    return h("div", { class: "panel", id: PANEL_ID }, errorNotice("drm", {}), actions(src, true));
+  }
+
   function singleView(src: VideoSource): HTMLElement {
+    if (isBlocked(src)) return h("div", { class: "view" }, summary(src), protectedPanel(src));
     const panel = h("div", { class: "panel", role: "tabpanel", id: PANEL_ID, "aria-labelledby": `tab-${s.mode}`, tabindex: 0 });
     if (s.mode === "video") panel.append(videoPanel(src), actions(src, true));
     else if (s.mode === "screenshot") panel.append(screenshotPanel(src));
@@ -298,6 +334,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
         },
       ),
       button("Not listed?", () => deps.post({ t: "picker/start", tabId: deps.tab.id }), { variant: "link", key: "not-listed" }),
+      ...(isBlocked(cur) ? [errorNotice("drm", {})] : []),
       actions(cur, true),
     );
     return view;
@@ -307,11 +344,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     const steps = h("ol", { class: "steps" }, h("li", {}, "Open the page with the video."), h("li", {}, "Press Start picking."), h("li", {}, "Click the video you want."));
     const sw = switchControl("Remember this site", s.remembered, () => {
       if (s.remembered) return;
-      void deps.requestAccess().then((r) => {
-        s.remembered = r === "granted" || r === "already";
-        if (r === "denied") showToast(ERROR_COPY.permission.message);
-        render("remember");
-      });
+      grantAccess();
     }, "remember");
     return h(
       "div",
@@ -330,7 +363,16 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
       const m = jobRowModel(j);
       const li = h("li", { class: "job" }, h("p", { class: "card-title" }, m.title), h("p", { class: "card-meta" }, `${m.label} · ${m.percent} %`));
       if (j.status === "running" || j.status === "queued") li.append(progress(`${m.title} progress`, m.percent));
-      if (m.message) li.append(h("p", { class: "warning", role: "status" }, m.message));
+      const failedCode = j.status === "failed" ? j.error?.code : undefined;
+      if (failedCode && ["pick", "grant", "lower-quality"].includes(ERROR_COPY[failedCode].action)) {
+        const jobSource = s.sources.find((x) => x.id === j.sourceId) ?? selected();
+        const handlers: ErrorHandlers = {
+          pick: () => deps.post({ t: "picker/start", tabId: deps.tab.id }),
+          grant: grantAccess,
+          "lower-quality": () => jobSource && chooseLowerQuality(jobSource),
+        };
+        li.append(errorNotice(failedCode, handlers));
+      } else if (m.message) li.append(h("p", { class: "warning", role: "status" }, m.message));
       const row = h("div", { class: "actions" });
       if (m.actions.includes("cancel")) row.append(button("Cancel", () => deps.post({ t: "job/cancel", jobId: j.jobId }), { label: `Cancel ${m.title}` }));
       if (m.actions.includes("resume")) row.append(button(m.resumeLabel ?? "Resume", () => deps.post({ t: "job/resume", jobId: j.jobId, tabId: deps.tab.id }), { variant: "primary" }));
@@ -378,7 +420,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     else frag.append(listView());
     const jobs = jobsView();
     if (jobs) frag.append(jobs);
-    frag.append(h("div", { class: "toast-region", role: "status", "aria-live": "polite" }, s.toast ? toast(s.toast) : undefined));
+    frag.append(h("div", { class: "toast-region", role: "status", "aria-live": "polite" }, s.toast ? (s.toastError ? errorToast(s.toastError, { grant: grantAccess }) : toast(s.toast)) : undefined));
     root.replaceChildren(frag);
 
     if (key) {
