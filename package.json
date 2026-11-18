@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "vite",
     "icons": "tsx scripts/build-icons.ts",
+    "check:store": "tsx scripts/check-store-build.ts dist",
     "build": "npm run icons && vite build",
     "build:personal": "npm run icons && vite build --mode personal --outDir dist-personal",
     "lint": "eslint .",
