@@ -31,7 +31,7 @@ export type JobEvent =
   | { t: "resume-needs-pick"; jobId: string };
 
 /** Service worker to a tab's content script (tabs.sendMessage). */
-export type WorkerToContent = { t: "demo/ping"; nonce: string };
+export type WorkerToContent = { t: "demo/ping"; nonce: string } | { t: "dom/scan" };
 
 export type ContentToWorker =
   | { t: "dom/report"; sources: VideoSource[]; frameUrl: string }
@@ -110,7 +110,8 @@ export function isWorkerToPopup(x: unknown): x is WorkerToPopup {
 }
 
 export function isWorkerToContent(x: unknown): x is WorkerToContent {
-  return isObj(x) && x.t === "demo/ping" && str(x.nonce);
+  if (!isObj(x)) return false;
+  return x.t === "dom/scan" || (x.t === "demo/ping" && str(x.nonce));
 }
 
 export function isContentToWorker(x: unknown): x is ContentToWorker {
