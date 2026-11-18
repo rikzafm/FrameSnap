@@ -1,0 +1,18 @@
+dist
+dist-personal
+node_modules
+public/icons
+package-lock.json
+LICENSE
+.scratch
+docs
+*.md
+# Pre-existing hand-formatted code; not reformatted by tooling.
+src/core
+src/offscreen/opfs-chunk-store.ts
+tests/helpers
+tests/unit/fetch-loop.test.ts
+tests/unit/media.test.ts
+tests/unit/misc.test.ts
+tests/unit/plan.test.ts
+tests/unit/resume-flow.test.ts

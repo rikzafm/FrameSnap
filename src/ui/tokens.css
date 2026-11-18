@@ -1,0 +1,84 @@
+/* Paper Ink design tokens. Light is the default; dark is derived from it. */
+@font-face {
+  font-family: 'Fraunces';
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+  src: url('./fonts/fraunces-latin-600-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src: url('./fonts/inter-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+  src: url('./fonts/inter-latin-500-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+  src: url('./fonts/inter-latin-600-normal.woff2') format('woff2');
+}
+
+:root {
+  --paper: #faf8f3;
+  --paper-raised: #ffffff;
+  --paper-sunken: #f0ece2;
+  --ink: #1d1b17;
+  --ink-soft: #5c564b;
+  --rule: #ddd6c6;
+  --accent: #c23a08;
+  --accent-ink: #faf8f3;
+  --focus: #1d1b17;
+  --danger: #a4190f;
+  --ok: #2f6b3a;
+
+  --font-display: 'Fraunces', Georgia, serif;
+  --font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 14px;
+  --space-4: 20px;
+  --radius: 8px;
+  --target: 44px;
+  --popup-width: 380px;
+}
+
+/* Dark palette, applied by the theme setting (data-theme) or the system. */
+:root[data-theme='dark'] {
+  --paper: #171510;
+  --paper-raised: #211e18;
+  --paper-sunken: #100e0b;
+  --ink: #f1ece0;
+  --ink-soft: #b3ab9a;
+  --rule: #3a352b;
+  --accent: #e0582a;
+  --accent-ink: #171510;
+  --focus: #f1ece0;
+  --danger: #ff8a7a;
+  --ok: #7fc48c;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']):not([data-theme='dark']) {
+    --paper: #171510;
+    --paper-raised: #211e18;
+    --paper-sunken: #100e0b;
+    --ink: #f1ece0;
+    --ink-soft: #b3ab9a;
+    --rule: #3a352b;
+    --accent: #e0582a;
+    --accent-ink: #171510;
+    --focus: #f1ece0;
+    --danger: #ff8a7a;
+    --ok: #7fc48c;
+  }
+}
