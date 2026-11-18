@@ -110,7 +110,7 @@ describe("GIF job", () => {
     expect(await h.finished(jobId)).toMatchObject({ t: "failed", resumable: false });
   });
 
-  it("fails the job when the engine runs out of memory and keeps the fetched chunks for a retry", async () => {
+  it("fails the job when the engine runs out of memory; a GIF is retried from the popup, not resumed, so its chunks are dropped", async () => {
     const h = createHarness({ sources: [progressive("a", { duration: 20 }, { width: 1920, height: 1080 })] });
     h.cdn.put("/a.mp4", { body: bytes(10 * KB), etag: '"e"' });
     h.backend.exec = async () => {
@@ -118,8 +118,8 @@ describe("GIF job", () => {
     };
     const jobId = await h.orch.startGif({ tabId: 1, sourceId: "a", options: gif() });
     const ev = await h.finished(jobId);
-    expect(ev).toMatchObject({ t: "failed", resumable: true });
-    expect((h.area.data[jobKey(jobId)] as JobRecord).tracks[0]!.committed.length).toBeGreaterThan(0);
+    expect(ev).toMatchObject({ t: "failed", resumable: false, keptRatio: 0 });
+    expect((await h.store.list(jobId, "0")).size).toBe(0);
   });
 
   it("fails a ready preview when the converter goes away", async () => {

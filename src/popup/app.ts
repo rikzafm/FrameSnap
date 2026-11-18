@@ -7,6 +7,7 @@ import type { JobRecord } from "../core/jobs/job";
 import type { WorkerToPopup, PopupToWorker } from "../core/messages";
 import { ERROR_COPY, type ErrorCode } from "../core/errors";
 import { clampTrim, defaultGifTrim } from "../core/gif";
+import { resolveDefaultQuality } from "../core/settings";
 import type { AudioMode, DownloadOptions, GifOptions, OutputFormat, VideoSource } from "../core/model";
 import type { SiteAccessResult } from "../platform/site-access";
 import { BURST_CAP, DEFAULT_SNAP_OPTIONS, type SnapFormat, type SnapOptions } from "../core/snap";
@@ -22,7 +23,9 @@ export interface PopupDeps {
   /** Must be called straight from a click handler (needs a user gesture). */
   requestAccess(): Promise<SiteAccessResult>;
   now(): Date;
-  defaults: { format: OutputFormat; filenameTemplate: string };
+  defaults: { format: OutputFormat; filenameTemplate: string; quality?: string; audio?: AudioMode };
+  /** Shows the first-run notice until the user acknowledges it. */
+  firstRun?: { onAcknowledge(): void };
   mode: Mode;
   onModeChange(mode: Mode): void;
   /** True when the site is already allowed, so the Remember switch starts on. */
@@ -65,8 +68,10 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     previews: new Map<string, GifPreview>(),
     mode: deps.pick?.mode ?? deps.mode,
     format: deps.defaults.format,
-    quality: "best",
-    audio: "keep" as AudioMode,
+    /** Set once the user picks a quality; until then the saved default applies. */
+    quality: undefined as string | undefined,
+    audio: (deps.defaults.audio ?? "keep") as AudioMode,
+    firstRun: deps.firstRun !== undefined,
     trimOn: false,
     trimStart: 0,
     trimEnd: 0,
@@ -96,6 +101,8 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     }, error ? 8000 : 4000);
   }
 
+  const quality = (src: VideoSource): string => s.quality ?? resolveDefaultQuality(src, deps.defaults.quality ?? "best");
+
   function grantAccess() {
     void deps.requestAccess().then((r) => {
       s.remembered = r === "granted" || r === "already";
@@ -107,7 +114,8 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
   /** Switch to the next lower rendition than the current choice (or the lowest one). */
   function chooseLowerQuality(src: VideoSource) {
     const variants = qualityChoices(src).slice(1);
-    const at = s.quality === "best" ? 0 : variants.findIndex((c) => c.value === s.quality);
+    const cur = quality(src);
+    const at = cur === "best" ? 0 : variants.findIndex((c) => c.value === cur);
     const next = variants[Math.min(variants.length - 1, at + 1)];
     if (next) s.quality = next.value;
     s.selectedId = src.id;
@@ -117,7 +125,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
   const isBlocked = (src: VideoSource) => src.protection === "drm";
 
   function options(src: VideoSource): DownloadOptions {
-    const o: DownloadOptions = { format: s.format, quality: s.quality, audio: s.audio, filenameTemplate: s.template };
+    const o: DownloadOptions = { format: s.format, quality: quality(src), audio: s.audio, filenameTemplate: s.template };
     const end = Math.min(s.trimEnd || (src.duration ?? 0), src.duration ?? Infinity);
     if (s.trimOn && end > s.trimStart) o.trim = { start: s.trimStart, end };
     return o;
@@ -216,7 +224,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     const panel = h("div", { class: "rows" });
     panel.append(
       selectRow("opt-format", "Format", "format", FORMATS.map((f) => ({ value: f, label: f.toUpperCase() })), s.format, (v) => ((s.format = v as OutputFormat), render())),
-      selectRow("opt-quality", "Quality", "quality", qualityChoices(src), s.quality, (v) => ((s.quality = v), render()), d.estimate ? h("span", { class: "estimate" }, d.estimate) : undefined),
+      selectRow("opt-quality", "Quality", "quality", qualityChoices(src), quality(src), (v) => ((s.quality = v), render()), d.estimate ? h("span", { class: "estimate" }, d.estimate) : undefined),
     );
     const audioId = nextId("audio-label");
     panel.append(
@@ -361,7 +369,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
         cur.id,
         (id) => {
           s.selectedId = id;
-          s.quality = "best";
+          s.quality = undefined;
           render(`card-${id}`);
         },
       ),
@@ -451,6 +459,16 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
 
     const frag = document.createDocumentFragment();
     frag.append(brand());
+    if (s.firstRun) {
+      frag.append(
+        h(
+          "section",
+          { class: "banner first-run", "aria-label": "Before you start" },
+          h("p", { class: "banner-text" }, "Only save content you have the right to use."),
+          button("Got it", () => ((s.firstRun = false), deps.firstRun?.onAcknowledge(), render()), { variant: "primary", key: "first-run-ack" }),
+        ),
+      );
+    }
     const banner = bannerView();
     if (banner) frag.append(banner);
     const cur = selected();
@@ -488,6 +506,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
         if (msg.tabId !== deps.tab.id) return;
         s.loaded = true;
         s.sources = msg.sources;
+        if (msg.resumable) s.resumable = msg.resumable;
         s.selectedId = msg.selectedId ?? (s.sources.some((x) => x.id === s.selectedId) ? s.selectedId : s.sources[0]?.id);
         render();
         return;
@@ -513,7 +532,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
         else if (e.t === "cancelled") {
           s.previews.delete(e.jobId);
           s.jobs.set(e.jobId, { ...base, status: "cancelled" });
-        }
+        } else if (e.t === "notice") showToast(ERROR_COPY[e.code].message);
         else if (e.t === "resume-needs-pick") {
           s.jobs.set(e.jobId, { ...base, status: "failed", error: { code: "not-found", message: ERROR_COPY["not-found"].message, retryable: true }, resumable: false });
           deps.post({ t: "picker/start", tabId: deps.tab.id, resumeJobId: e.jobId });

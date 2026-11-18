@@ -5,6 +5,7 @@
  */
 import type { AppError } from "./errors";
 import type { TrackPlan } from "./jobs/chunks";
+import type { SweepRecord } from "./jobs/cleanup";
 import type { TrackValidators } from "./jobs/source-ref";
 import type { Seek } from "./ffmpeg-args";
 import type { GifOptions } from "./model";
@@ -18,7 +19,7 @@ export interface EngineTrackRef {
 
 export type WorkerToEngine =
   /** Fetch every missing chunk into the store (resumable). */
-  | { t: "engine/fetch"; jobId: string; tracks: TrackPlan[]; headers?: Record<string, string>; validators?: Record<string, TrackValidators> }
+  | { t: "engine/fetch"; jobId: string; tracks: TrackPlan[]; headers?: Record<string, string>; validators?: Record<string, TrackValidators>; /** Wipe the job's stored chunks first (resume found the media changed). */ fresh?: boolean }
   /** Assemble the fetched tracks and run the download command line. */
   | { t: "engine/download"; jobId: string; plan: DownloadPlan; tracks: EngineTrackRef[]; seeks: (Seek | undefined)[] }
   /** Join the first track's chunks into one file without ffmpeg (plan.needsEngine is false). */
@@ -30,6 +31,8 @@ export type WorkerToEngine =
   | { t: "engine/discard"; jobId: string }
   /** The file is saved: free the blob: URL. */
   | { t: "engine/revoke"; url: string }
+  /** Housekeeping: drop the chunks `selectEvictions` picks for these records. */
+  | { t: "engine/sweep"; records: SweepRecord[]; now: number }
   | { t: "engine/storage" };
 
 export interface StorageReport {
@@ -46,7 +49,9 @@ export type EngineToWorker =
   /** Fetch phase finished. `resumable: false` = the store fell back to memory. */
   | { t: "engine/fetched"; jobId: string; resumable: boolean }
   | { t: "engine/result"; jobId: string; url: string; bytes: number; mime: string }
-  | { t: "engine/error"; jobId: string; error: AppError; resumable: boolean };
+  | { t: "engine/error"; jobId: string; error: AppError; resumable: boolean }
+  /** The sweep is done; these jobs' chunks were deleted. */
+  | { t: "engine/swept"; jobIds: string[] };
 
 function isObj(x: unknown): x is Record<string, unknown> {
   return typeof x === "object" && x !== null;
@@ -71,6 +76,8 @@ export function isWorkerToEngine(x: unknown): x is WorkerToEngine {
       return str(x.jobId);
     case "engine/revoke":
       return str(x.url);
+    case "engine/sweep":
+      return num(x.now) && Array.isArray(x.records) && x.records.every((r) => isObj(r) && str(r.id) && typeof r.status === "string" && typeof r.resumable === "boolean" && num(r.updatedAt));
     case "engine/storage":
       return true;
     default:
@@ -81,6 +88,8 @@ export function isWorkerToEngine(x: unknown): x is WorkerToEngine {
 export function isEngineToWorker(x: unknown): x is EngineToWorker {
   if (!isObj(x) || typeof x.t !== "string") return false;
   switch (x.t) {
+    case "engine/swept":
+      return Array.isArray(x.jobIds) && x.jobIds.every(str);
     case "engine/ready":
       return isObj(x.storage) && num(x.storage.usage) && num(x.storage.quota) && typeof x.storage.persisted === "boolean";
     case "engine/commit":
