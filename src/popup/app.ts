@@ -6,6 +6,7 @@
 import type { JobRecord } from "../core/jobs/job";
 import type { WorkerToPopup, PopupToWorker } from "../core/messages";
 import { ERROR_COPY } from "../core/errors";
+import { resolveDefaultQuality } from "../core/settings";
 import type { AudioMode, DownloadOptions, OutputFormat, VideoSource } from "../core/model";
 import type { SiteAccessResult } from "../platform/site-access";
 import { BURST_CAP, DEFAULT_SNAP_OPTIONS, type SnapFormat, type SnapOptions } from "../core/snap";
@@ -19,7 +20,9 @@ export interface PopupDeps {
   /** Must be called straight from a click handler (needs a user gesture). */
   requestAccess(): Promise<SiteAccessResult>;
   now(): Date;
-  defaults: { format: OutputFormat; filenameTemplate: string };
+  defaults: { format: OutputFormat; filenameTemplate: string; quality?: string; audio?: AudioMode };
+  /** Shows the first-run notice until the user acknowledges it. */
+  firstRun?: { onAcknowledge(): void };
   mode: Mode;
   onModeChange(mode: Mode): void;
   /** True when the site is already allowed, so the Remember switch starts on. */
@@ -54,8 +57,10 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     selectedId: undefined as string | undefined,
     mode: deps.mode,
     format: deps.defaults.format,
-    quality: "best",
-    audio: "keep" as AudioMode,
+    /** Set once the user picks a quality; until then the saved default applies. */
+    quality: undefined as string | undefined,
+    audio: (deps.defaults.audio ?? "keep") as AudioMode,
+    firstRun: deps.firstRun !== undefined,
     trimOn: false,
     trimStart: 0,
     trimEnd: 0,
@@ -82,8 +87,10 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     }, 4000);
   }
 
+  const quality = (src: VideoSource): string => s.quality ?? resolveDefaultQuality(src, deps.defaults.quality ?? "best");
+
   function options(src: VideoSource): DownloadOptions {
-    const o: DownloadOptions = { format: s.format, quality: s.quality, audio: s.audio, filenameTemplate: s.template };
+    const o: DownloadOptions = { format: s.format, quality: quality(src), audio: s.audio, filenameTemplate: s.template };
     const end = Math.min(s.trimEnd || (src.duration ?? 0), src.duration ?? Infinity);
     if (s.trimOn && end > s.trimStart) o.trim = { start: s.trimStart, end };
     return o;
@@ -152,7 +159,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     const panel = h("div", { class: "rows" });
     panel.append(
       selectRow("opt-format", "Format", "format", FORMATS.map((f) => ({ value: f, label: f.toUpperCase() })), s.format, (v) => ((s.format = v as OutputFormat), render())),
-      selectRow("opt-quality", "Quality", "quality", qualityChoices(src), s.quality, (v) => ((s.quality = v), render()), d.estimate ? h("span", { class: "estimate" }, d.estimate) : undefined),
+      selectRow("opt-quality", "Quality", "quality", qualityChoices(src), quality(src), (v) => ((s.quality = v), render()), d.estimate ? h("span", { class: "estimate" }, d.estimate) : undefined),
     );
     const audioId = nextId("audio-label");
     panel.append(
@@ -286,7 +293,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
         cur.id,
         (id) => {
           s.selectedId = id;
-          s.quality = "best";
+          s.quality = undefined;
           render(`card-${id}`);
         },
       ),
@@ -352,6 +359,16 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
 
     const frag = document.createDocumentFragment();
     frag.append(brand());
+    if (s.firstRun) {
+      frag.append(
+        h(
+          "section",
+          { class: "banner first-run", "aria-label": "Before you start" },
+          h("p", { class: "banner-text" }, "Only save content you have the right to use."),
+          button("Got it", () => ((s.firstRun = false), deps.firstRun?.onAcknowledge(), render()), { variant: "primary", key: "first-run-ack" }),
+        ),
+      );
+    }
     const banner = bannerView();
     if (banner) frag.append(banner);
     const cur = selected();

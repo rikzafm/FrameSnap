@@ -78,6 +78,8 @@ export interface HistoryEntry {
   pageUrl: string;
   filename: string;
   bytes?: number;
+  /** The chrome.downloads id, for "Show in folder". */
+  downloadId?: number;
   finishedAt: number;
 }
 
@@ -342,6 +344,7 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
         site: a.source.site,
         pageUrl: a.source.pageUrl,
         filename,
+        downloadId,
         ...(bytes !== undefined ? { bytes } : {}),
         finishedAt: rec?.updatedAt ?? now(),
       })
