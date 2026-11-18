@@ -31,11 +31,18 @@ export type JobEvent =
   | { t: "resume-needs-pick"; jobId: string };
 
 /** Service worker to a tab's content script (tabs.sendMessage). */
-export type WorkerToContent = { t: "demo/ping"; nonce: string };
+export type WorkerToContent =
+  | { t: "demo/ping"; nonce: string }
+  | { t: "dom/scan" }
+  | { t: "picker/start"; resumeJobId?: string; resumeTitle?: string }
+  | { t: "picker/cancel" };
+
+export type PickerAction = "download" | "gif" | "snap";
 
 export type ContentToWorker =
   | { t: "dom/report"; sources: VideoSource[]; frameUrl: string }
   | { t: "picker/picked"; source: VideoSource; resumeJobId?: string }
+  | { t: "picker/action"; action: PickerAction; source: VideoSource }
   | { t: "snap/data"; dataUrl: string; width: number; height: number; time: number; title: string }
   | { t: "demo/pong"; nonce: string; reply: string };
 
@@ -110,7 +117,18 @@ export function isWorkerToPopup(x: unknown): x is WorkerToPopup {
 }
 
 export function isWorkerToContent(x: unknown): x is WorkerToContent {
-  return isObj(x) && x.t === "demo/ping" && str(x.nonce);
+  if (!isObj(x)) return false;
+  switch (x.t) {
+    case "dom/scan":
+    case "picker/cancel":
+      return true;
+    case "demo/ping":
+      return str(x.nonce);
+    case "picker/start":
+      return (x.resumeJobId === undefined || str(x.resumeJobId)) && (x.resumeTitle === undefined || typeof x.resumeTitle === "string");
+    default:
+      return false;
+  }
 }
 
 export function isContentToWorker(x: unknown): x is ContentToWorker {
@@ -120,6 +138,8 @@ export function isContentToWorker(x: unknown): x is ContentToWorker {
       return isSources(x.sources) && str(x.frameUrl);
     case "picker/picked":
       return isVideoSource(x.source) && (x.resumeJobId === undefined || str(x.resumeJobId));
+    case "picker/action":
+      return (x.action === "download" || x.action === "gif" || x.action === "snap") && isVideoSource(x.source);
     case "snap/data":
       return typeof x.dataUrl === "string" && num(x.width) && num(x.height) && num(x.time) && typeof x.title === "string";
     case "demo/pong":
