@@ -33,3 +33,20 @@ export async function requestSiteAccess(tabId: number, pageUrl: string, deps: Si
   await deps.injectContent(tabId);
   return "granted";
 }
+
+export interface SiteListDeps {
+  permissions: {
+    getAll(): Promise<{ origins?: string[] }>;
+    remove(p: { origins: string[] }): Promise<boolean>;
+  };
+}
+
+/** Origins the user granted at runtime (everything beyond the manifest's built-in hosts). */
+export async function grantedSites(deps: SiteListDeps, builtIn: readonly string[]): Promise<string[]> {
+  const all = (await deps.permissions.getAll()).origins ?? [];
+  return all.filter((o) => !builtIn.includes(o));
+}
+
+export function revokeSiteAccess(origin: string, deps: SiteListDeps): Promise<boolean> {
+  return deps.permissions.remove({ origins: [origin] });
+}
