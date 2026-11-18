@@ -12,6 +12,8 @@ export type PopupToWorker =
   | { t: "job/download"; tabId: number; sourceId: string; options: DownloadOptions }
   | { t: "job/gif"; tabId: number; sourceId: string; options: GifOptions }
   | { t: "job/cancel"; jobId: string }
+  /** Save the previewed GIF. Discarding it is `job/cancel`. */
+  | { t: "job/save"; jobId: string }
   | { t: "job/resume"; jobId: string; tabId: number }
   | { t: "job/discard"; jobId: string }
   | { t: "picker/start"; tabId: number; resumeJobId?: string }
@@ -32,6 +34,8 @@ export type JobEvent =
   | { t: "done"; jobId: string; downloadId: number; filename: string }
   | { t: "failed"; jobId: string; error: AppError; resumable: boolean; keptRatio: number }
   | { t: "cancelled"; jobId: string }
+  /** A GIF is rendered and waits for Save or Discard; `url` is a blob: URL the popup can preview. */
+  | { t: "gif-ready"; jobId: string; url: string; bytes: number; filename: string; title: string }
   | { t: "resume-needs-pick"; jobId: string };
 
 /** Service worker to a tab's content script (tabs.sendMessage). */
@@ -71,6 +75,16 @@ const isDir = (x: unknown): x is 1 | -1 => x === 1 || x === -1;
 const isSnapOptions = (x: unknown): x is SnapOptions =>
   isObj(x) && (x.format === "png" || x.format === "jpeg" || x.format === "webp") && num(x.quality) && typeof x.copy === "boolean" && typeof x.showButton === "boolean";
 const isRect = (x: unknown): x is Rect => isObj(x) && num(x.x) && num(x.y) && num(x.width) && num(x.height);
+const isGifOptions = (x: unknown): x is GifOptions =>
+  isObj(x) &&
+  isObj(x.trim) &&
+  num(x.trim.start) &&
+  num(x.trim.end) &&
+  x.trim.end > x.trim.start &&
+  (x.fps === 10 || x.fps === 15 || x.fps === 24 || x.fps === 30) &&
+  (x.width === 320 || x.width === 480 || x.width === 640 || x.width === "original") &&
+  num(x.loop) &&
+  typeof x.dither === "boolean";
 const PHASES = new Set<string>(["fetch", "engine", "save"]);
 
 /** Loose structural check: enough to stop a malformed source crashing a receiver. */
@@ -85,10 +99,12 @@ export function isPopupToWorker(x: unknown): x is PopupToWorker {
     case "media/list":
       return num(x.tabId);
     case "job/download":
-    case "job/gif":
       return num(x.tabId) && str(x.sourceId) && isObj(x.options);
+    case "job/gif":
+      return num(x.tabId) && str(x.sourceId) && isGifOptions(x.options);
     case "job/cancel":
     case "job/discard":
+    case "job/save":
       return str(x.jobId);
     case "job/resume":
       return str(x.jobId) && num(x.tabId);
@@ -120,6 +136,8 @@ export function isJobEvent(x: unknown): x is JobEvent {
       return typeof x.phase === "string" && PHASES.has(x.phase) && num(x.ratio) && (x.bytes === undefined || num(x.bytes));
     case "done":
       return num(x.downloadId) && str(x.filename);
+    case "gif-ready":
+      return str(x.url) && num(x.bytes) && str(x.filename) && typeof x.title === "string";
     case "failed":
       return isObj(x.error) && typeof x.resumable === "boolean" && num(x.keptRatio);
     default:

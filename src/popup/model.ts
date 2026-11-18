@@ -4,16 +4,12 @@
  */
 import { ERROR_COPY, FrameSnapError, toAppError, type AppError } from "../core/errors";
 import { buildFilename } from "../core/filename";
+import { formatBytes } from "../core/format";
 import type { JobPhase, JobRecord } from "../core/jobs/job";
 import type { DownloadOptions, VideoSource } from "../core/model";
 import { planDownload, type PlanWarning } from "../core/plan";
 
-export function formatBytes(bytes: number): string {
-  const mb = bytes / (1024 * 1024);
-  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
-  if (mb >= 1) return `${Math.round(mb)} MB`;
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-}
+export { formatBytes };
 
 const WARNING_TEXT: Record<PlanWarning, string> = {
   "large-file": "This is a large file. Make sure you have the disk space.",

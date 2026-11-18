@@ -34,7 +34,8 @@ import { buildTracks, probeFromHeaders, type ProbeResult, type ResolvedInput } f
 import type { JobEvent } from "../core/messages";
 import { isMasterPlaylist, type parseMedia } from "../core/media/hls";
 import type { parseMpd } from "../core/media/dash";
-import type { DownloadOptions, VideoSource } from "../core/model";
+import { gifSourceSize, pickGifVariant } from "../core/gif";
+import type { DownloadOptions, GifOptions, VideoSource } from "../core/model";
 import { planDownload, type DownloadPlan, type PlanInput } from "../core/plan";
 import type { EngineLifecycle } from "./engine-lifecycle";
 import type { JobStore } from "./job-store";
@@ -103,6 +104,16 @@ export interface DownloadOrchestrator {
   download(req: { tabId: number; sourceId: string; options: DownloadOptions }): Promise<string>;
   /** Same, for a source the caller already holds. */
   start(source: VideoSource, options: DownloadOptions): Promise<string>;
+  /**
+   * Fetch just a time range, render it as a GIF and keep the result for preview (`gif-ready`).
+   * Nothing is saved until `saveGif`; `cancel` discards it.
+   */
+  startGif(req: { tabId: number; sourceId: string; options: GifOptions; filenameTemplate?: string }): Promise<string>;
+  startGifSource(source: VideoSource, options: GifOptions, filenameTemplate?: string): Promise<string>;
+  /** Save a GIF that is waiting in preview. */
+  saveGif(jobId: string): Promise<void>;
+  /** GIFs rendered and waiting for Save or Discard, for a popup that just opened. */
+  pendingGifs(): Extract<JobEvent, { t: "gif-ready" }>[];
   cancel(jobId: string): Promise<void>;
   onEngineMessage(msg: EngineToWorker): Promise<void>;
   /** The engine port closed (offscreen document gone): fail what was running on it. */
@@ -132,6 +143,10 @@ interface Active {
   directResumes: number;
   ruleId?: number;
   seeks?: (Seek | undefined)[];
+  /** Set for GIF jobs: what to render and the pixel size of the fetched rendition. */
+  gif?: { options: GifOptions; src: { width: number; height: number } };
+  /** The GIF is rendered and waits in preview (the blob stays in the offscreen document). */
+  gifReady: boolean;
 }
 
 const hostOf = (url: string): string | undefined => {
@@ -337,7 +352,7 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     await deps.history
       .add({
         id: a.id,
-        kind: "download",
+        kind: a.gif ? "gif" : "download",
         title: a.source.title,
         site: a.source.site,
         pageUrl: a.source.pageUrl,
@@ -409,6 +424,19 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
       const rec = await update(next.id, (j) => enterPhase(j, "engine", now()));
       if (!rec) throw new FrameSnapError("internal", "job record missing");
       deps.emit({ t: "progress", jobId: next.id, phase: "engine", ratio: 0 });
+      if (next.gif) {
+        const track = rec.tracks[0]!;
+        const trim = next.gif.options.trim;
+        await deps.engine.send({
+          t: "engine/gif",
+          jobId: next.id,
+          options: next.gif.options,
+          src: next.gif.src,
+          track: { trackId: track.trackId, keys: track.keys, container: next.plan.inputs[0]!.container },
+          seek: next.seeks?.[0] ?? { start: trim.start, length: trim.end - trim.start },
+        });
+        return;
+      }
       await deps.engine.send({
         t: "engine/download",
         jobId: next.id,
@@ -468,6 +496,14 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
         }
         a.blobUrl = m.url;
         a.blobBytes = m.bytes;
+        if (a.gif) {
+          // preview first: the file is saved only when the user says so
+          a.gifReady = true;
+          await update(a.id, (j) => enterPhase(j, "save", now()));
+          await deps.engine.send({ t: "engine/discard", jobId: a.id }).catch(() => undefined);
+          deps.emit(gifReadyEvent(a));
+          return;
+        }
         try {
           await save(a, m.url);
         } catch (err) {
@@ -481,12 +517,27 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     }
   }
 
+  const gifReadyEvent = (a: Active): Extract<JobEvent, { t: "gif-ready" }> => ({
+    t: "gif-ready",
+    jobId: a.id,
+    url: a.blobUrl!,
+    bytes: a.blobBytes ?? 0,
+    filename: a.filename,
+    title: a.source.title,
+  });
+
   // ---- public API ----------------------------------------------------------------
 
-  async function startJob(source: VideoSource, options: DownloadOptions): Promise<string> {
+  async function startJob(source: VideoSource, options: DownloadOptions, gifRequest?: GifOptions): Promise<string> {
     let plan: DownloadPlan;
+    let gif: Active["gif"];
     try {
-      plan = planDownload(source, options);
+      if (gifRequest) {
+        // a GIF needs picture only: fetch the range of the rendition that is wide enough
+        const variant = pickGifVariant(source, gifRequest.width);
+        gif = { options: gifRequest, src: gifSourceSize(variant) };
+        plan = planDownload(source, { format: "mp4", quality: variant.id, audio: "remove", trim: gifRequest.trim, filenameTemplate: options.filenameTemplate });
+      } else plan = planDownload(source, options);
       if (plan.warnings.includes("too-large")) throw new FrameSnapError("too-large");
     } catch (err) {
       // nothing was started: report it under a throwaway id
@@ -499,9 +550,9 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     const filename = buildFilename(
       options.filenameTemplate,
       { title: source.title, site: source.site, date: new Date(now()), height: plan.height, width: variant?.width },
-      plan.output.extension,
+      gif ? "gif" : plan.output.extension,
     );
-    const record = newJob({ id, kind: "download", filename, source: makeSourceRef(source, variant), options, plan, now: now() });
+    const record = newJob({ id, kind: gif ? "gif" : "download", filename, source: makeSourceRef(source, variant), options: gifRequest ?? options, plan, now: now() });
     await jobs.put(record);
     deps.emit({ t: "queued", jobId: id });
 
@@ -516,6 +567,8 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
       cancelling: false,
       finalized: false,
       directResumes: 0,
+      gif,
+      gifReady: false,
     };
     active.set(id, a);
     void (plan.route === "direct" ? runDirect(a) : runEngineRoute(a)).catch(async (err) => {
@@ -525,8 +578,34 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     return id;
   }
 
+  const gifTemplate = (t?: string): DownloadOptions => ({ format: "mp4", quality: "best", audio: "remove", filenameTemplate: t ?? "{title}" });
+
   return {
     start: startJob,
+
+    startGifSource: (source, options, template) => startJob(source, gifTemplate(template), options),
+
+    async startGif({ tabId, sourceId, options, filenameTemplate }) {
+      const source = await deps.lookupSource(tabId, sourceId);
+      if (!source) {
+        const jobId = newId();
+        deps.emit({ t: "failed", jobId, error: appError("not-found"), resumable: false, keptRatio: 0 });
+        return jobId;
+      }
+      return startJob(source, gifTemplate(filenameTemplate), options);
+    },
+
+    async saveGif(jobId) {
+      const a = active.get(jobId);
+      if (!a?.gifReady || !a.blobUrl || a.cancelling || a.downloadId !== undefined) return;
+      try {
+        await save(a, a.blobUrl);
+      } catch (err) {
+        await failJob(a, err);
+      }
+    },
+
+    pendingGifs: () => [...active.values()].filter((a) => a.gifReady && !a.finalized && a.downloadId === undefined && a.blobUrl).map(gifReadyEvent),
 
     async download({ tabId, sourceId, options }) {
       const source = await deps.lookupSource(tabId, sourceId);
@@ -567,6 +646,13 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     async onEngineDisconnect() {
       engineOwner = undefined;
       for (const a of [...active.values()]) {
+        if (a.gifReady) {
+          // the blob lived in the offscreen document that just went away
+          a.blobUrl = undefined;
+          a.gifReady = false;
+          await failJob(a, appError("network", "the converter stopped"));
+          continue;
+        }
         if (!a.busy && !engineQueue.includes(a.id)) continue;
         a.busy = undefined;
         if (a.cancelling) await finalizeCancel(a);

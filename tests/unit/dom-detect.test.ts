@@ -61,6 +61,15 @@ describe("dom detector", () => {
     expect(isContentToWorker({ t: "dom/report", sources: [s], frameUrl: PAGE })).toBe(true);
   });
 
+  it("reports the playhead so the GIF tab can start there", () => {
+    document.body.innerHTML = "";
+    const v = stubVideo(document.createElement("video"), { src: "https://cdn.test/a.mp4", duration: 60 });
+    v.currentTime = 12.5;
+    document.body.append(v);
+    const d = createDomDetector({ document, frameUrl: PAGE, emit: () => {} });
+    expect(d.scan()[0]!.dom).toMatchObject({ currentTime: 12.5 });
+  });
+
   it("keeps ids and element keys stable across scans", () => {
     const { top } = fixture();
     const d = createDomDetector({ document, frameUrl: PAGE, emit: () => {} });

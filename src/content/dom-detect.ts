@@ -102,6 +102,7 @@ export function createDomDetector(opts: DomDetectorOptions): DomDetector {
       rectWidth: rect.width,
       rectHeight: rect.height,
       playing: !v.paused && !v.ended && v.readyState > 2,
+      currentTime: v.currentTime,
     };
     const variants: Variant[] = [];
     if (/^https?:/i.test(src)) {

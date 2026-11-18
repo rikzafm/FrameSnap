@@ -75,6 +75,8 @@ export interface DomFacts {
   rectWidth: number;
   rectHeight: number;
   playing: boolean;
+  /** Playhead in seconds when the page was read; the GIF tab starts its range here. */
+  currentTime?: number;
 }
 
 /* ---------- user options ---------- */
