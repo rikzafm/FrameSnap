@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isContentToWorker, isJobEvent, isPopupToWorker, isWorkerToPopup } from "../../src/core/messages";
+import { isContentToWorker, isJobEvent, isPopupToWorker, isWorkerToContent, isWorkerToPopup } from "../../src/core/messages";
 
 const source = { id: "s", title: "t", variants: [], audioTracks: [] };
 
@@ -48,5 +48,19 @@ describe("message guards", () => {
     expect(isContentToWorker({ t: "snap/data", dataUrl: "data:,", width: "1", height: 1, time: 0, title: "t" })).toBe(false);
     expect(isContentToWorker({ t: "demo/pong", nonce: "n", reply: "hi" })).toBe(true);
     expect(isContentToWorker({ t: "x" })).toBe(false);
+  });
+
+  it("validates worker-to-content picker messages", () => {
+    expect(isWorkerToContent({ t: "picker/start" })).toBe(true);
+    expect(isWorkerToContent({ t: "picker/start", resumeJobId: "j", resumeTitle: "My clip" })).toBe(true);
+    expect(isWorkerToContent({ t: "picker/start", resumeJobId: "" })).toBe(false);
+    expect(isWorkerToContent({ t: "picker/cancel" })).toBe(true);
+  });
+
+  it("validates picker/action from content", () => {
+    expect(isContentToWorker({ t: "picker/action", action: "gif", source })).toBe(true);
+    expect(isContentToWorker({ t: "picker/action", action: "download", source })).toBe(true);
+    expect(isContentToWorker({ t: "picker/action", action: "nuke", source })).toBe(false);
+    expect(isContentToWorker({ t: "picker/action", action: "gif" })).toBe(false);
   });
 });

@@ -40,6 +40,8 @@ export interface DetectContext {
   pageTitle: string;
   domVideos: readonly DomVideo[];
   network: readonly NetworkHit[];
+  /** JSON payloads forwarded by a main-world network tap (X GraphQL). Untrusted shape. */
+  tapped?: readonly unknown[];
 }
 
 export interface AdapterContext {
