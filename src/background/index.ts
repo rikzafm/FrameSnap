@@ -9,6 +9,10 @@ import { createMediaService } from "./media-service";
 import { createTabRegistry } from "./registry";
 import { createSniffer } from "./sniffer";
 import { routeContentMessage, routePopupMessage } from "./router";
+import { createChromeSnapService, handlePopupSnap, isSnapContentMessage, listenForSnapCommand } from "./snap-wire";
+
+const snap = createChromeSnapService(createTabRegistry(session.area));
+listenForSnapCommand(snap);
 
 /** Read-only lookup of a saved job's source reference. */
 async function resumeRef(jobId: string) {
@@ -62,6 +66,7 @@ runtime.onConnect.addListener((port) => {
       void media.openPopup(raw.tabId, (m) => port.postMessage(m)).catch(() => undefined);
       return;
     }
+    if (handlePopupSnap(snap, raw)) return;
     void routePopupMessage(raw, { sendToTab: (tabId, m) => tabs.sendMessage(tabId, m), resumeRef })
       .then((reply) => {
         if (reply) port.postMessage(reply);
@@ -71,7 +76,7 @@ runtime.onConnect.addListener((port) => {
 });
 
 runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
-  if (!isContentToWorker(raw) || (raw.t !== "picker/picked" && raw.t !== "picker/action") || sender.tab?.id === undefined) return false;
+  if (!isContentToWorker(raw) || (raw.t !== "picker/picked" && raw.t !== "picker/action" && !isSnapContentMessage(raw)) || sender.tab?.id === undefined) return false;
   const from = { tabId: sender.tab.id, frameId: sender.frameId ?? 0 };
   void routeContentMessage(raw, from, {
     resumeRef,
@@ -80,8 +85,11 @@ runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
     onPicked: async (tabId, source) => {
       await storage.local.set({ [PICKER_SELECTION_KEY]: { tabId, sourceId: source.id, tab: "list" } });
     },
+    onSnapData: (tabId, msg) => snap.onData(tabId, msg),
+    onSnapTainted: (tabId, msg) => snap.onTainted(tabId, msg),
     onAction: async (action, tabId, source) => {
-      if (action !== "gif") return; // download and snap are wired by their own tickets
+      if (action === "snap") return snap.frame(tabId, { source });
+      if (action !== "gif") return; // download is wired by its own ticket
       await storage.local.set({ [PICKER_SELECTION_KEY]: { tabId, sourceId: source.id, tab: "gif" } });
       await chrome.action.openPopup().catch(() => undefined);
     },

@@ -2,6 +2,7 @@ import { isWorkerToPopup } from "../core/messages";
 import type { JobRecord } from "../core/jobs/job";
 import { resumableOn } from "../core/jobs/job";
 import { canonicalPageUrl } from "../core/jobs/source-ref";
+import { SNAP_PREFS_KEY, normalizeSnapOptions } from "../core/snap";
 import { JOB_PREFIX } from "../background/job-store";
 import { permissions, runtime, scripting, storage, tabs } from "../platform/chrome";
 import { connectWithReconnect, popupPortName } from "../platform/ports";
@@ -55,6 +56,10 @@ async function boot() {
     mode,
     onModeChange: (m) => void memory.set(url, m),
     hasAccess,
+    snap: {
+      options: normalizeSnapOptions((await storage.local.get(SNAP_PREFS_KEY))[SNAP_PREFS_KEY]),
+      onChange: (o) => void storage.local.set({ [SNAP_PREFS_KEY]: o }),
+    },
   });
 
   const stored = await storage.local.get(null);
