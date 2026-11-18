@@ -49,7 +49,7 @@ export interface PlanInput {
   live: boolean;
 }
 
-export type PlanWarning = "large-file" | "too-large" | "assumed-codecs";
+export type PlanWarning = "large-file" | "too-large" | "assumed-codecs" | "capture-recorder" | "capture-mse";
 
 export interface DownloadPlan {
   route: Route;
@@ -187,6 +187,9 @@ export function planDownload(source: VideoSource, opts: DownloadOptions): Downlo
   else if (kinds.has("hls") || kinds.has("dash")) route = "segments";
   else if (needsEngine) route = "chunked";
   else route = first.acceptsRanges && (first.sizeBytes ?? 0) >= CHUNKED_MIN_BYTES ? "chunked" : "direct";
+
+  if (kinds.has("recorder")) warnings.push("capture-recorder");
+  else if (kinds.has("mse-capture")) warnings.push("capture-mse");
 
   let notResumableReason: DownloadPlan["notResumableReason"];
   if (route === "direct") notResumableReason = "direct";

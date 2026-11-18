@@ -1,4 +1,6 @@
-import type { ContentToWorker } from "../core/messages";
+import { isWorkerToContent, type ContentToWorker } from "../core/messages";
+import { createMseClient } from "../main-world/mse-protocol";
+import { blobVariants, createCaptureRunner } from "./capture";
 import { createDomDetector } from "./dom-detect";
 import { handleWorkerMessage } from "./handler";
 import { createPicker } from "./picker";
@@ -12,12 +14,25 @@ const send = (msg: ContentToWorker) => {
   chrome.runtime.sendMessage(msg).catch(() => {});
 };
 
+// MSE capture: the main-world hook (registered only on granted sites) reports streams over a nonce-checked channel.
+const mse = createMseClient(window, crypto.randomUUID());
+const canRecord = typeof HTMLMediaElement !== "undefined" && "captureStream" in HTMLMediaElement.prototype && typeof MediaRecorder !== "undefined";
+
 const detector = createDomDetector({
   document,
   frameUrl,
   emit: (sources) => send({ t: "dom/report", sources, frameUrl }),
+  blobVariants: (video, src, elementKey) => blobVariants(video, src, elementKey, mse.byUrl(src), canRecord),
 });
+mse.onChange(() => detector.refresh());
 detector.start();
+
+const captures = createCaptureRunner({
+  detector,
+  mse,
+  send,
+  urls: { create: (b) => URL.createObjectURL(b), revoke: (u) => URL.revokeObjectURL(u) },
+});
 
 const picker = createPicker({ document, detector, send });
 
@@ -42,6 +57,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 chrome.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {
+  if (isWorkerToContent(raw) && (raw.t === "capture/start" || raw.t === "capture/cancel" || raw.t === "capture/revoke")) {
+    void captures.handle(raw);
+    return false;
+  }
   const reply = handleWorkerMessage(raw, detector, frameUrl, picker, snapper);
   if (!reply) return false;
   sendResponse(reply);

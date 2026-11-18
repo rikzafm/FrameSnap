@@ -8,7 +8,7 @@ import { createDownloadOrchestrator, type DownloadDeps, type DownloadDelta, type
 import { createJobStore, type StorageAreaLike } from "../../src/background/job-store";
 import { createEngineLifecycle } from "../../src/background/engine-lifecycle";
 import type { WorkerToEngine } from "../../src/core/engine-messages";
-import type { JobEvent } from "../../src/core/messages";
+import type { JobEvent, WorkerToContent } from "../../src/core/messages";
 import { parseMedia } from "../../src/core/media/hls";
 import { parseMpd } from "../../src/core/media/dash";
 import { MemoryChunkStore } from "../../src/core/jobs/store";
@@ -93,6 +93,7 @@ export function createHarness(opts: { sources?: VideoSource[]; files?: Record<st
   const canResume = new Map<number, boolean>();
   const rules = new Map<number, chrome.declarativeNetRequest.Rule>();
   const ruleLog: string[] = [];
+  const captureSent: { tabId: number; frameId: number; msg: WorkerToContent }[] = [];
   const textFiles = new Map<string, string>(Object.entries(opts.files ?? {}));
   let seq = 0;
   let ids = 0;
@@ -189,6 +190,7 @@ export function createHarness(opts: { sources?: VideoSource[]; files?: Record<st
     fetch: fetcher,
     parseMedia,
     parseMpd,
+    capture: { send: async (tabId, frameId, msg) => void captureSent.push({ tabId, frameId, msg }) },
     lookupSource: async (_tab, id) => opts.sources?.find((s) => s.id === id),
     history: { add: async (e) => void history.push(e) },
     emit: (e) => events.push(e),
@@ -206,6 +208,7 @@ export function createHarness(opts: { sources?: VideoSource[]; files?: Record<st
     jobs,
     events,
     sent,
+    captureSent,
     history,
     saved,
     blobs,

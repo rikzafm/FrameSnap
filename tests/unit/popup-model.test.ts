@@ -25,6 +25,22 @@ function source(over: Partial<VideoSource> = {}): VideoSource {
 const opts = (o: Partial<DownloadOptions> = {}): DownloadOptions => ({ format: "mp4", quality: "best", audio: "keep", filenameTemplate: "{title}-{site}-{resolution}", ...o });
 const date = new Date(2026, 0, 5);
 
+describe("describeDownload: capture sources say why they are different", () => {
+  const blob = (kind: "mse-capture" | "recorder") =>
+    source({ variants: [{ id: "c1", kind, url: "blob:https://example.com/1", container: kind === "recorder" ? "webm" : "mp4", height: 720, hasAudio: true }] });
+
+  it("recorder: real time, video must be playing, cannot resume", () => {
+    const d = describeDownload(blob("recorder"), opts(), date);
+    expect(d.warnings.map((w) => w.code)).toContain("capture-recorder");
+    expect(d.warnings.find((w) => w.code === "capture-recorder")!.text).toMatch(/real time.*playing.*cannot be resumed/i);
+  });
+
+  it("MSE: only the buffered part, cannot resume", () => {
+    const d = describeDownload(blob("mse-capture"), opts(), date);
+    expect(d.warnings.find((w) => w.code === "capture-mse")!.text).toMatch(/buffered.*cannot be resumed/i);
+  });
+});
+
 describe("describeDownload", () => {
   it("shows the estimate and a file name preview", () => {
     const d = describeDownload(source(), opts({ quality: "v720" }), date);
