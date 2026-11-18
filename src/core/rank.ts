@@ -36,7 +36,8 @@ export function bestVariant(variants: readonly Variant[]): Variant | undefined {
 function mergeVariants(a: readonly Variant[], b: readonly Variant[]): Variant[] {
   const byKey = new Map<string, Variant>();
   for (const v of [...a, ...b]) {
-    const key = v.url.split("#")[0]!;
+    // DASH renditions all share the MPD url, so the rendition id is part of the key
+    const key = v.kind === "dash" ? `${v.url.split("#")[0]!}#${v.id}` : v.url.split("#")[0]!;
     const prev = byKey.get(key);
     byKey.set(key, prev ? { ...prev, ...definedOnly(v) } : v);
   }
