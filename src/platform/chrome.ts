@@ -46,6 +46,10 @@ export const downloads = {
 
 export const scripting = {
   executeScript: <A extends unknown[], R>(injection: chrome.scripting.ScriptInjection<A, R>) => chrome.scripting.executeScript(injection),
+  getRegisteredContentScripts: (filter: chrome.scripting.ContentScriptFilter) => chrome.scripting.getRegisteredContentScripts(filter),
+  registerContentScripts: (scripts: chrome.scripting.RegisteredContentScript[]) => chrome.scripting.registerContentScripts(scripts),
+  updateContentScripts: (scripts: chrome.scripting.RegisteredContentScript[]) => chrome.scripting.updateContentScripts(scripts),
+  unregisterContentScripts: (filter: chrome.scripting.ContentScriptFilter) => chrome.scripting.unregisterContentScripts(filter),
 };
 
 export const offscreen = {
@@ -72,5 +76,8 @@ export const dnr = {
 export const permissions = {
   contains: (p: chrome.permissions.Permissions) => chrome.permissions.contains(p),
   request: (p: chrome.permissions.Permissions) => chrome.permissions.request(p),
+  getAll: () => chrome.permissions.getAll(),
+  onAdded: chrome.permissions.onAdded,
+  onRemoved: chrome.permissions.onRemoved,
   remove: (p: chrome.permissions.Permissions) => chrome.permissions.remove(p),
 };

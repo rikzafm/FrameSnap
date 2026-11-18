@@ -31,7 +31,7 @@ import {
 } from "../core/jobs/job";
 import { makeSourceRef, type TrackValidators } from "../core/jobs/source-ref";
 import { buildTracks, probeFromHeaders, type ProbeResult, type ResolvedInput } from "../core/jobs/tracks";
-import type { JobEvent } from "../core/messages";
+import type { CaptureEvent, JobEvent, WorkerToContent } from "../core/messages";
 import { isMasterPlaylist, type parseMedia } from "../core/media/hls";
 import type { parseMpd } from "../core/media/dash";
 import type { DownloadOptions, VideoSource } from "../core/model";
@@ -91,6 +91,8 @@ export interface DownloadDeps {
   fetch: Fetcher;
   parseMedia: typeof parseMedia;
   parseMpd: typeof parseMpd;
+  /** Capture route: talks to one frame of the page the video is in. */
+  capture?: { send(tabId: number, frameId: number, msg: WorkerToContent): Promise<void> };
   lookupSource(tabId: number, sourceId: string): Promise<VideoSource | undefined>;
   history: { add(entry: HistoryEntry): Promise<void> };
   emit(event: JobEvent): void;
@@ -102,8 +104,10 @@ export interface DownloadOrchestrator {
   /** Plan and start a job for a detected video. Resolves with the job id once the job is queued. */
   download(req: { tabId: number; sourceId: string; options: DownloadOptions }): Promise<string>;
   /** Same, for a source the caller already holds. */
-  start(source: VideoSource, options: DownloadOptions): Promise<string>;
+  start(source: VideoSource, options: DownloadOptions, ctx?: { tabId?: number }): Promise<string>;
   cancel(jobId: string): Promise<void>;
+  /** Progress, result or error from the content script of a capture job. */
+  onCaptureMessage(msg: CaptureEvent): Promise<void>;
   onEngineMessage(msg: EngineToWorker): Promise<void>;
   /** The engine port closed (offscreen document gone): fail what was running on it. */
   onEngineDisconnect(): Promise<void>;
@@ -121,7 +125,10 @@ interface Active {
   filename: string;
   ac: AbortController;
   /** What the offscreen document is doing for this job right now. */
-  busy?: "fetch" | "engine" | "assemble";
+  busy?: "fetch" | "engine" | "assemble" | "capture";
+  /** Capture route: where the page-side capture runs, and the blob: URL it handed back. */
+  home?: { tabId: number; frameId: number };
+  captureUrl?: string;
   holdsEngine: boolean;
   usesEngine: boolean;
   cancelling: boolean;
@@ -171,6 +178,8 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
   let engineOwner: string | undefined;
   let inbox: Promise<void> = Promise.resolve();
   let rulesChain: Promise<unknown> = Promise.resolve();
+  /** Where each capture job's page side lives, so a late result for a dropped job can still be freed. */
+  const captureHomes = new Map<string, { tabId: number; frameId: number }>();
 
   /** Read-modify-write on the stored record (commits arrive through the store, so never write a stale copy). */
   async function update(id: string, fn: (j: JobRecord) => JobRecord): Promise<JobRecord | undefined> {
@@ -289,6 +298,12 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     if (a.downloadId !== undefined) byDownload.delete(a.downloadId);
     releaseEngine(a);
     await clearRules(a);
+    if (a.captureUrl && a.home) {
+      const url = a.captureUrl;
+      a.captureUrl = undefined;
+      captureHomes.delete(a.id);
+      await deps.capture?.send(a.home.tabId, a.home.frameId, { t: "capture/revoke", url }).catch(() => undefined);
+    }
     if (a.blobUrl) {
       const url = a.blobUrl;
       a.blobUrl = undefined;
@@ -367,6 +382,59 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     await setRules(a, [input.url]);
     await update(a.id, (j) => enterPhase(startRecord(j, now()), "save", now()));
     await save(a, input.url);
+  }
+
+  // ---- capture route -------------------------------------------------------------
+
+  /** The page records or exports the video itself and hands back a blob: URL for chrome.downloads. */
+  async function runCapture(a: Active): Promise<void> {
+    const input = a.plan.inputs[0]!;
+    const elementKey = a.source.frameRef?.elementKey;
+    if (!deps.capture || !a.home || !elementKey) throw new FrameSnapError("not-found", "no page to capture the video from");
+    await update(a.id, (j) => startRecord(j, now()));
+    a.busy = "capture";
+    captureHomes.set(a.id, a.home);
+    const trim = a.plan.trim;
+    const msg: WorkerToContent =
+      input.kind === "mse-capture"
+        ? { t: "capture/start", jobId: a.id, kind: "mse-capture", elementKey, streamId: input.refId.replace(/^mse:/, "") }
+        : { t: "capture/start", jobId: a.id, kind: "recorder", elementKey, ...(trim ? { durationSec: trim.end - trim.start } : {}) };
+    await deps.capture.send(a.home.tabId, a.home.frameId, msg);
+  }
+
+  async function handleCapture(m: CaptureEvent): Promise<void> {
+    const a = active.get(m.jobId);
+    if (!a || a.finalized) {
+      // a result for a job we already gave up on: free the page's blob
+      const home = captureHomes.get(m.jobId);
+      if (m.t === "capture/result" && home) await deps.capture?.send(home.tabId, home.frameId, { t: "capture/revoke", url: m.url }).catch(() => undefined);
+      if (m.t !== "capture/progress") captureHomes.delete(m.jobId);
+      return;
+    }
+    switch (m.t) {
+      case "capture/progress":
+        deps.emit({ t: "progress", jobId: a.id, phase: "fetch", ratio: m.ratio });
+        return;
+      case "capture/error":
+        a.busy = undefined;
+        if (a.cancelling || m.error.code === "cancelled") return finalizeCancel(a);
+        return failJob(a, m.error, false);
+      case "capture/result": {
+        a.busy = undefined;
+        a.captureUrl = m.url;
+        a.blobBytes = m.bytes;
+        // the page decides the container (WebM from the recorder, fMP4 from MSE), so the name follows it
+        a.filename = a.filename.replace(/\.[^./\\]+$/, "") + `.${m.container}`;
+        const filename = a.filename;
+        try {
+          await update(a.id, (j) => ({ ...j, filename }));
+          await save(a, m.url);
+        } catch (err) {
+          await failJob(a, err);
+        }
+        return;
+      }
+    }
   }
 
   // ---- engine routes -------------------------------------------------------------
@@ -483,7 +551,7 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
 
   // ---- public API ----------------------------------------------------------------
 
-  async function startJob(source: VideoSource, options: DownloadOptions): Promise<string> {
+  async function startJob(source: VideoSource, options: DownloadOptions, ctx: { tabId?: number } = {}): Promise<string> {
     let plan: DownloadPlan;
     try {
       plan = planDownload(source, options);
@@ -516,9 +584,10 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
       cancelling: false,
       finalized: false,
       directResumes: 0,
+      ...(ctx.tabId !== undefined ? { home: { tabId: ctx.tabId, frameId: source.frameRef?.frameId ?? 0 } } : {}),
     };
     active.set(id, a);
-    void (plan.route === "direct" ? runDirect(a) : runEngineRoute(a)).catch(async (err) => {
+    void (plan.route === "direct" ? runDirect(a) : plan.route === "capture" ? runCapture(a) : runEngineRoute(a)).catch(async (err) => {
       if (a.cancelling) return;
       await failJob(a, err);
     });
@@ -535,7 +604,7 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
         deps.emit({ t: "failed", jobId, error: appError("not-found"), resumable: false, keptRatio: 0 });
         return jobId;
       }
-      return startJob(source, options);
+      return startJob(source, options, { tabId });
     },
 
     async cancel(jobId) {
@@ -552,11 +621,17 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
       if (a.cancelling) return;
       a.cancelling = true;
       a.ac.abort();
+      if (a.busy === "capture" && a.home) await deps.capture?.send(a.home.tabId, a.home.frameId, { t: "capture/cancel", jobId }).catch(() => undefined);
       if (a.busy === "fetch" || a.busy === "engine" || a.busy === "assemble") {
         await deps.engine.send({ t: "engine/cancel", jobId }).catch(() => undefined);
         return; // the engine answers with engine/error{cancelled}, which finalizes
       }
       await finalizeCancel(a);
+    },
+
+    onCaptureMessage(msg) {
+      inbox = inbox.then(() => handleCapture(msg)).catch(() => undefined);
+      return inbox;
     },
 
     onEngineMessage(msg) {
@@ -567,7 +642,7 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     async onEngineDisconnect() {
       engineOwner = undefined;
       for (const a of [...active.values()]) {
-        if (!a.busy && !engineQueue.includes(a.id)) continue;
+        if (a.busy === "capture" || (!a.busy && !engineQueue.includes(a.id))) continue;
         a.busy = undefined;
         if (a.cancelling) await finalizeCancel(a);
         else await failJob(a, appError("network", "the converter stopped"));
