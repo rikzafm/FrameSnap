@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Frame Snap">
+  <rect width="128" height="128" rx="32" fill="#C23A08"/>
+  <g fill="none" stroke="#FAF8F3" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 50V30a8 8 0 0 1 8-8h20"/>
+    <path d="M78 22h20a8 8 0 0 1 8 8v20"/>
+    <path d="M106 78v20a8 8 0 0 1-8 8H78"/>
+    <path d="M50 106H30a8 8 0 0 1-8-8V78"/>
+  </g>
+  <circle cx="64" cy="64" r="11" fill="#FAF8F3"/>
+</svg>

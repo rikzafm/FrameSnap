@@ -1,2 +1,5 @@
 .claude/
 .agent/
+node_modules/
+dist/
+coverage/
