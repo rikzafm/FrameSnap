@@ -21,12 +21,12 @@ function source(id: string, over: Partial<VideoSource> = {}): VideoSource {
 }
 
 let root: HTMLElement;
-let posted: any[];
+let posted: Record<string, unknown>[];
 
 function make(sources: VideoSource[], over: Partial<PopupDeps> = {}) {
   const popup = createPopup(root, {
     tab: { id: 5, url: "https://example.com/p" },
-    post: (m) => posted.push(m),
+    post: (m) => posted.push(m as unknown as Record<string, unknown>),
     requestAccess: vi.fn(async () => "granted") as unknown as PopupDeps["requestAccess"],
     now: () => new Date(2026, 0, 5),
     defaults: { format: "mp4", filenameTemplate: "{title}" },
@@ -107,7 +107,7 @@ describe("GIF tab", () => {
   it("defaults to 15 fps, 480 px, forever, dithered", () => {
     make([source("a")]);
     byText(".btn", "Make GIF")!.click();
-    expect(posted[0].options).toMatchObject({ fps: 15, width: 480, loop: 0, dither: true });
+    expect(posted[0]!.options).toMatchObject({ fps: 15, width: 480, loop: 0, dither: true });
   });
 
   it("starts on the GIF tab with the picked video when the picker asked for it", () => {

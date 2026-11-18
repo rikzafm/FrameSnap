@@ -6,12 +6,14 @@
 import type { JobRecord } from "../core/jobs/job";
 import type { WorkerToPopup, PopupToWorker } from "../core/messages";
 import { ERROR_COPY, type ErrorCode } from "../core/errors";
-import type { AudioMode, DownloadOptions, OutputFormat, VideoSource } from "../core/model";
+import { clampTrim, defaultGifTrim } from "../core/gif";
+import type { AudioMode, DownloadOptions, GifOptions, OutputFormat, VideoSource } from "../core/model";
 import type { SiteAccessResult } from "../platform/site-access";
 import { BURST_CAP, DEFAULT_SNAP_OPTIONS, type SnapFormat, type SnapOptions } from "../core/snap";
 import { button, h, iconButton, nextId, progress, radioCards, segmented, selectRow, switchControl, tabs, toast } from "../ui/components";
 import type { Mode } from "./mode-memory";
 import { errorNotice, errorToast, type ErrorHandlers } from "../ui/error-notice";
+import { gifOptions, gifPanel, gifPreviewView, type GifChoices, type GifPreview } from "./gif-panel";
 import { describeDownload, jobRowModel, qualityChoices, resumeBanner, type JobView } from "./model";
 
 export interface PopupDeps {
@@ -27,11 +29,15 @@ export interface PopupDeps {
   hasAccess?: boolean;
   /** Saved Screenshot-tab choices; `onChange` persists them for the shortcut and the on-video button. */
   snap?: { options: SnapOptions; onChange(options: SnapOptions): void };
+  /** The in-page picker asked for this video on this tab (e.g. its GIF button). */
+  pick?: { sourceId: string; mode: Mode };
 }
 
 interface JobMeta extends JobView {
   sourceId?: string;
   options?: DownloadOptions;
+  /** Set for GIF jobs, so Retry makes a GIF again. */
+  gif?: GifOptions;
 }
 
 const FORMATS: OutputFormat[] = ["mp4", "webm", "mkv", "mov", "mp3", "m4a"];
@@ -52,8 +58,12 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
   const s = {
     loaded: false,
     sources: [] as VideoSource[],
-    selectedId: undefined as string | undefined,
-    mode: deps.mode,
+    selectedId: deps.pick?.sourceId as string | undefined,
+    /** The picker named a video: show it alone with its tabs even when several were found. */
+    focused: deps.pick !== undefined,
+    gif: { fps: 15, width: 480 as GifOptions["width"], loop: 0, dither: true, trim: { start: 0, end: 2 }, forSource: undefined as string | undefined },
+    previews: new Map<string, GifPreview>(),
+    mode: deps.pick?.mode ?? deps.mode,
     format: deps.defaults.format,
     quality: "best",
     audio: "keep" as AudioMode,
@@ -63,7 +73,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     template: deps.defaults.filenameTemplate,
     remembered: deps.hasAccess === true,
     jobs: new Map<string, JobMeta>(),
-    pending: [] as { title: string; sourceId: string; options: DownloadOptions }[],
+    pending: [] as { title: string; sourceId: string; options: DownloadOptions; gif?: GifOptions }[],
     resumable: [] as JobRecord[],
     bannerOpen: false,
     toast: undefined as string | undefined,
@@ -116,6 +126,36 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
   function startDownload(src: VideoSource, opts: DownloadOptions) {
     s.pending.push({ title: src.title, sourceId: src.id, options: opts });
     deps.post({ t: "job/download", tabId: deps.tab.id, sourceId: src.id, options: opts });
+  }
+
+  function gifChoices(src: VideoSource): GifChoices {
+    if (s.gif.forSource !== src.id) {
+      s.gif.trim = defaultGifTrim(src.dom?.currentTime ?? 0, src.duration);
+      s.gif.forSource = src.id;
+    }
+    return { fps: s.gif.fps as GifChoices["fps"], width: s.gif.width, loop: s.gif.loop, dither: s.gif.dither, trim: s.gif.trim };
+  }
+
+  function makeGif(src: VideoSource) {
+    const options = gifOptions(gifChoices(src));
+    s.pending.push({ title: src.title, sourceId: src.id, options: { format: "mp4", quality: "best", audio: "remove", filenameTemplate: s.template }, gif: options });
+    deps.post({ t: "job/gif", tabId: deps.tab.id, sourceId: src.id, options });
+  }
+
+  function gifTab(src: VideoSource): HTMLElement {
+    const busy = [...s.jobs.values()].some((j) => j.gif !== undefined && (j.status === "queued" || j.status === "running"));
+    return gifPanel({
+      src,
+      choices: gifChoices(src),
+      busy,
+      onMake: () => makeGif(src),
+      onChange: (patch, focusKey) => {
+        const { trim, ...rest } = patch;
+        Object.assign(s.gif, rest);
+        if (trim) s.gif.trim = clampTrim(trim, src.duration);
+        render(focusKey);
+      },
+    });
   }
 
   /* ---------- views ---------- */
@@ -297,7 +337,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     const panel = h("div", { class: "panel", role: "tabpanel", id: PANEL_ID, "aria-labelledby": `tab-${s.mode}`, tabindex: 0 });
     if (s.mode === "video") panel.append(videoPanel(src), actions(src, true));
     else if (s.mode === "screenshot") panel.append(screenshotPanel(src));
-    else panel.append(h("p", { class: "shell" }, "GIF maker is coming soon."));
+    else panel.append(gifTab(src));
     return h(
       "div",
       { class: "view" },
@@ -327,8 +367,22 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
       ),
       button("Not listed?", () => deps.post({ t: "picker/start", tabId: deps.tab.id }), { variant: "link", key: "not-listed" }),
       ...(isBlocked(cur) ? [errorNotice("drm", {})] : []),
-      actions(cur, true),
     );
+    if (isBlocked(cur)) view.append(actions(cur, true));
+    else {
+      const panel = h("div", { class: "panel", role: "tabpanel", id: PANEL_ID, "aria-labelledby": `tab-${s.mode}`, tabindex: 0 });
+      if (s.mode === "video") panel.append(actions(cur, true));
+      else if (s.mode === "screenshot") panel.append(screenshotPanel(cur));
+      else panel.append(gifTab(cur));
+      view.append(
+        tabs("Mode", MODE_TABS, s.mode, PANEL_ID, (v) => {
+          s.mode = v as Mode;
+          deps.onModeChange(s.mode);
+          render(`tab-${v}`);
+        }),
+        panel,
+      );
+    }
     return view;
   }
 
@@ -373,7 +427,11 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
           button("Retry", () => {
             if (j.sourceId && j.options) {
               const src = s.sources.find((x) => x.id === j.sourceId);
-              if (src) startDownload(src, j.options);
+              if (!src) return;
+              if (j.gif) {
+                s.pending.push({ title: src.title, sourceId: src.id, options: j.options, gif: j.gif });
+                deps.post({ t: "job/gif", tabId: deps.tab.id, sourceId: src.id, options: j.gif });
+              } else startDownload(src, j.options);
             }
           }, { variant: "primary" }),
         );
@@ -398,8 +456,18 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     const cur = selected();
     if (!s.loaded) frag.append(h("p", { class: "shell", role: "status" }, "Looking for videos…"));
     else if (!cur) frag.append(emptyView());
-    else if (s.sources.length === 1) frag.append(singleView(cur));
+    else if (s.sources.length === 1 || s.focused) frag.append(singleView(cur));
     else frag.append(listView());
+    const previews = gifPreviewView(
+      [...s.previews.values()],
+      (id) => deps.post({ t: "job/save", jobId: id }),
+      (id) => {
+        deps.post({ t: "job/cancel", jobId: id });
+        s.previews.delete(id);
+        render();
+      },
+    );
+    if (previews) frag.append(previews);
     const jobs = jobsView();
     if (jobs) frag.append(jobs);
     frag.append(h("div", { class: "toast-region", role: "status", "aria-live": "polite" }, s.toast ? (s.toastError ? errorToast(s.toastError, { grant: grantAccess }) : toast(s.toast)) : undefined));
@@ -429,15 +497,23 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
       const prev = s.jobs.get(e.jobId);
       if (e.t === "queued") {
         const p = s.pending.shift();
-        s.jobs.set(e.jobId, { jobId: e.jobId, title: p?.title ?? "Download", status: "queued", phase: "fetch", ratio: 0, sourceId: p?.sourceId, options: p?.options });
+        s.jobs.set(e.jobId, { jobId: e.jobId, title: p?.title ?? "Download", status: "queued", phase: "fetch", ratio: 0, sourceId: p?.sourceId, options: p?.options, gif: p?.gif });
       } else {
         const base: JobMeta = prev ?? { jobId: e.jobId, title: "Download", status: "running", phase: "fetch", ratio: 0 };
-        if (e.t === "progress") s.jobs.set(e.jobId, { ...base, status: "running", phase: e.phase, ratio: e.ratio });
+        if (e.t === "failed") s.previews.delete(e.jobId);
+        if (e.t === "gif-ready") {
+          s.jobs.delete(e.jobId);
+          s.previews.set(e.jobId, { jobId: e.jobId, url: e.url, bytes: e.bytes, filename: e.filename, title: e.title });
+        } else if (e.t === "progress") s.jobs.set(e.jobId, { ...base, status: "running", phase: e.phase, ratio: e.ratio });
         else if (e.t === "done") {
+          s.previews.delete(e.jobId);
           s.jobs.set(e.jobId, { ...base, status: "done", ratio: 1 });
           showToast(`Saved ${e.filename}`);
         } else if (e.t === "failed") s.jobs.set(e.jobId, { ...base, status: "failed", error: e.error, resumable: e.resumable, keptRatio: e.keptRatio });
-        else if (e.t === "cancelled") s.jobs.set(e.jobId, { ...base, status: "cancelled" });
+        else if (e.t === "cancelled") {
+          s.previews.delete(e.jobId);
+          s.jobs.set(e.jobId, { ...base, status: "cancelled" });
+        }
         else if (e.t === "resume-needs-pick") {
           s.jobs.set(e.jobId, { ...base, status: "failed", error: { code: "not-found", message: ERROR_COPY["not-found"].message, retryable: true }, resumable: false });
           deps.post({ t: "picker/start", tabId: deps.tab.id, resumeJobId: e.jobId });

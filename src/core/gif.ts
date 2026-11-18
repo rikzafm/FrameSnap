@@ -1,6 +1,6 @@
 /** GIF tab logic with no DOM: trim limits, the rendition to fetch, the size range shown. */
 import { FrameSnapError } from "./errors";
-import { estimateGifBytes, GIF_LOW_MEMORY_BYTES, gifWorkingSetBytes } from "./estimate";
+import { estimateGifBytes } from "./estimate";
 import { formatBytes } from "./format";
 import { GIF_DEFAULT_SECONDS, GIF_MAX_SECONDS, type GifOptions, type TrimRange, type Variant, type VideoSource } from "./model";
 import { bestVariant } from "./rank";
@@ -62,16 +62,8 @@ export function gifSourceSize(v: Pick<Variant, "width" | "height">): { width: nu
   return { width, height };
 }
 
-export interface GifDescription {
-  /** "≈ 3.4 MB–6.3 MB" */
-  range: string;
-  lowMemory: boolean;
-}
-
-export function describeGif(options: GifOptions, src: { width: number; height: number }): GifDescription {
+/** "≈ 3.4 MB–6.3 MB". The low-memory warning is `gifMemoryWarning` in the popup model. */
+export function describeGif(options: GifOptions, src: { width: number; height: number }): { range: string } {
   const { low, high } = estimateGifBytes(options, src.width, src.height);
-  return {
-    range: `≈ ${formatBytes(low)}–${formatBytes(high)}`,
-    lowMemory: gifWorkingSetBytes(options, src.width, src.height) > GIF_LOW_MEMORY_BYTES,
-  };
+  return { range: `≈ ${formatBytes(low)}–${formatBytes(high)}` };
 }

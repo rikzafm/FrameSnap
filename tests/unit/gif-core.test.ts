@@ -78,13 +78,8 @@ describe("source picking", () => {
 });
 
 describe("describeGif", () => {
-  it("gives a size range and no warning for a small GIF", () => {
+  it("gives a size range", () => {
     const d = describeGif(opts(), { width: 1920, height: 1080 });
     expect(d.range).toMatch(/^≈ .+–.+$/);
-    expect(d.lowMemory).toBe(false);
-  });
-  it("warns when the RGBA working set is over the limit", () => {
-    // 3840 x 2160 x 4 bytes x 90 frames is about 2.9 GB
-    expect(describeGif(opts({ width: "original", fps: 30, trim: { start: 0, end: 3 } }), { width: 3840, height: 2160 }).lowMemory).toBe(true);
   });
 });
