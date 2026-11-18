@@ -229,6 +229,65 @@ describe("resume banner", () => {
   });
 });
 
+describe("screenshot tab", () => {
+  const open = (over: Partial<PopupDeps> = {}) => {
+    const popup = make({ mode: "screenshot", ...over });
+    popup.handle({ t: "media/updated", tabId: 5, sources: [source("a", "Cat clip")] });
+    return popup;
+  };
+
+  it("snaps with the chosen format and quality, and remembers them", () => {
+    const saved: unknown[] = [];
+    open({ snap: { options: { format: "png", quality: 0.92, copy: false, showButton: true }, onChange: (o) => saved.push(o) } });
+    expect(q("input[name=snap-quality]")).toBeNull(); // PNG has no quality
+    const fmt = q<HTMLSelectElement>("select[name=snap-format]")!;
+    fmt.value = "jpeg";
+    fmt.dispatchEvent(new Event("change", { bubbles: true }));
+    const quality = q<HTMLInputElement>("input[name=snap-quality]")!;
+    quality.value = "60";
+    quality.dispatchEvent(new Event("input", { bubbles: true }));
+    byText("button", "Snap frame")!.click();
+    expect(posted).toContainEqual({ t: "snap/frame", tabId: 5, sourceId: "a", options: { format: "jpeg", quality: 0.6, copy: false, showButton: true } });
+    expect(saved.at(-1)).toMatchObject({ format: "jpeg", quality: 0.6 });
+  });
+
+  it("toggles clipboard copy and the on-video button", () => {
+    const saved: { copy: boolean; showButton: boolean }[] = [];
+    open({ snap: { options: { format: "png", quality: 0.92, copy: false, showButton: true }, onChange: (o) => saved.push(o) } });
+    q('[role="switch"][data-key="snap-copy"]')!.click();
+    expect(saved.at(-1)!.copy).toBe(true);
+    q('[role="switch"][data-key="snap-button"]')!.click();
+    expect(saved.at(-1)!.showButton).toBe(false);
+  });
+
+  it("steps one frame back and forward", () => {
+    open();
+    byText("button", "◀")!.click();
+    byText("button", "▶")!.click();
+    expect(posted).toContainEqual({ t: "snap/step", tabId: 5, dir: -1, sourceId: "a" });
+    expect(posted).toContainEqual({ t: "snap/step", tabId: 5, dir: 1, sourceId: "a" });
+    expect(byText("button", "◀")!.getAttribute("aria-label")).toBe("Previous frame");
+    expect(byText("button", "▶")!.getAttribute("aria-label")).toBe("Next frame");
+  });
+
+  it("starts and stops a burst every N seconds", () => {
+    open();
+    const every = q<HTMLInputElement>("input[name=burst-every]")!;
+    every.value = "5";
+    every.dispatchEvent(new Event("input", { bubbles: true }));
+    byText("button", "Start burst")!.click();
+    expect(posted).toContainEqual(expect.objectContaining({ t: "snap/burst", tabId: 5, sourceId: "a", intervalSec: 5 }));
+    byText("button", "Stop burst")!.click();
+    expect(posted).toContainEqual({ t: "snap/burst-stop", tabId: 5 });
+    expect(root.textContent).toContain("200");
+  });
+
+  it("has no accessibility violations", async () => {
+    open();
+    expect(await axeViolations()).toEqual([]);
+  });
+});
+
 describe("mode memory", () => {
   it("remembers the mode per site", async () => {
     const data: Record<string, unknown> = {};

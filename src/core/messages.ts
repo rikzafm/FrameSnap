@@ -5,6 +5,7 @@
 import type { AppError } from "./errors";
 import type { JobPhase } from "./jobs/job";
 import type { DownloadOptions, GifOptions, VideoSource } from "./model";
+import type { Rect, SnapFormat, SnapOptions } from "./snap";
 
 export type PopupToWorker =
   | { t: "media/list"; tabId: number }
@@ -14,7 +15,10 @@ export type PopupToWorker =
   | { t: "job/resume"; jobId: string; tabId: number }
   | { t: "job/discard"; jobId: string }
   | { t: "picker/start"; tabId: number; resumeJobId?: string }
-  | { t: "snap/frame"; tabId: number; sourceId?: string }
+  | { t: "snap/frame"; tabId: number; sourceId?: string; options?: SnapOptions }
+  | { t: "snap/step"; tabId: number; dir: 1 | -1; sourceId?: string }
+  | { t: "snap/burst"; tabId: number; sourceId?: string; intervalSec: number; options?: SnapOptions }
+  | { t: "snap/burst-stop"; tabId: number }
   | { t: "demo/ping"; tabId: number; nonce: string };
 
 export type WorkerToPopup =
@@ -35,7 +39,14 @@ export type WorkerToContent =
   | { t: "demo/ping"; nonce: string }
   | { t: "dom/scan" }
   | { t: "picker/start"; resumeJobId?: string; resumeTitle?: string }
-  | { t: "picker/cancel" };
+  | { t: "picker/cancel" }
+  /** Snap the frame on screen; `elementKey` picks the video, else the best one in the frame. */
+  | { t: "snap/capture"; elementKey?: string; options: SnapOptions }
+  | { t: "snap/step"; dir: 1 | -1; elementKey?: string }
+  | { t: "snap/burst"; elementKey?: string; intervalSec: number; options: SnapOptions }
+  | { t: "snap/burst-stop" }
+  /** Outcome to show as a toast. */
+  | { t: "snap/result"; kind: "saved" | "tainted" | "error"; text: string };
 
 export type PickerAction = "download" | "gif" | "snap";
 
@@ -43,7 +54,9 @@ export type ContentToWorker =
   | { t: "dom/report"; sources: VideoSource[]; frameUrl: string }
   | { t: "picker/picked"; source: VideoSource; resumeJobId?: string }
   | { t: "picker/action"; action: PickerAction; source: VideoSource }
-  | { t: "snap/data"; dataUrl: string; width: number; height: number; time: number; title: string }
+  | { t: "snap/data"; dataUrl: string; width: number; height: number; time: number; title: string; site?: string; format?: SnapFormat }
+  /** The frame could not be read: ask the worker for a cropped tab capture instead. */
+  | { t: "snap/tainted"; rect: Rect; dpr: number; time: number; title: string; site?: string; format: SnapFormat; quality: number }
   | { t: "demo/pong"; nonce: string; reply: string }
   /** JSON captured by the main-world network tap (X GraphQL). */
   | { t: "net/tap"; payload: unknown; frameUrl: string };
@@ -54,6 +67,10 @@ function isObj(x: unknown): x is Record<string, unknown> {
 
 const num = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
 const str = (x: unknown): x is string => typeof x === "string" && x.length > 0;
+const isDir = (x: unknown): x is 1 | -1 => x === 1 || x === -1;
+const isSnapOptions = (x: unknown): x is SnapOptions =>
+  isObj(x) && (x.format === "png" || x.format === "jpeg" || x.format === "webp") && num(x.quality) && typeof x.copy === "boolean" && typeof x.showButton === "boolean";
+const isRect = (x: unknown): x is Rect => isObj(x) && num(x.x) && num(x.y) && num(x.width) && num(x.height);
 const PHASES = new Set<string>(["fetch", "engine", "save"]);
 
 /** Loose structural check: enough to stop a malformed source crashing a receiver. */
@@ -78,7 +95,13 @@ export function isPopupToWorker(x: unknown): x is PopupToWorker {
     case "picker/start":
       return num(x.tabId) && (x.resumeJobId === undefined || str(x.resumeJobId));
     case "snap/frame":
-      return num(x.tabId) && (x.sourceId === undefined || str(x.sourceId));
+      return num(x.tabId) && (x.sourceId === undefined || str(x.sourceId)) && (x.options === undefined || isSnapOptions(x.options));
+    case "snap/step":
+      return num(x.tabId) && isDir(x.dir) && (x.sourceId === undefined || str(x.sourceId));
+    case "snap/burst":
+      return num(x.tabId) && num(x.intervalSec) && (x.sourceId === undefined || str(x.sourceId)) && (x.options === undefined || isSnapOptions(x.options));
+    case "snap/burst-stop":
+      return num(x.tabId);
     case "demo/ping":
       return num(x.tabId) && str(x.nonce);
     default:
@@ -123,7 +146,16 @@ export function isWorkerToContent(x: unknown): x is WorkerToContent {
   switch (x.t) {
     case "dom/scan":
     case "picker/cancel":
+    case "snap/burst-stop":
       return true;
+    case "snap/capture":
+      return isSnapOptions(x.options) && (x.elementKey === undefined || typeof x.elementKey === "string");
+    case "snap/step":
+      return isDir(x.dir) && (x.elementKey === undefined || typeof x.elementKey === "string");
+    case "snap/burst":
+      return num(x.intervalSec) && isSnapOptions(x.options) && (x.elementKey === undefined || typeof x.elementKey === "string");
+    case "snap/result":
+      return (x.kind === "saved" || x.kind === "tainted" || x.kind === "error") && typeof x.text === "string";
     case "demo/ping":
       return str(x.nonce);
     case "picker/start":
@@ -144,6 +176,8 @@ export function isContentToWorker(x: unknown): x is ContentToWorker {
       return (x.action === "download" || x.action === "gif" || x.action === "snap") && isVideoSource(x.source);
     case "snap/data":
       return typeof x.dataUrl === "string" && num(x.width) && num(x.height) && num(x.time) && typeof x.title === "string";
+    case "snap/tainted":
+      return isRect(x.rect) && num(x.dpr) && num(x.time) && typeof x.title === "string" && (x.format === "png" || x.format === "jpeg" || x.format === "webp") && num(x.quality);
     case "net/tap":
       return isObj(x.payload) && str(x.frameUrl);
     case "demo/pong":

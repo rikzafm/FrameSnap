@@ -33,6 +33,9 @@ export interface ContentDeps {
   onPicked?(tabId: number, source: VideoSource): void | Promise<void>;
   /** An action-bar button on the picked video. */
   onAction?(action: PickerAction, tabId: number, source: VideoSource): void | Promise<void>;
+  /** A captured frame, or a frame the page could not read. */
+  onSnapData?(tabId: number, msg: Extract<ContentToWorker, { t: "snap/data" }>): void | Promise<void>;
+  onSnapTainted?(tabId: number, msg: Extract<ContentToWorker, { t: "snap/tainted" }>): void | Promise<void>;
 }
 
 export async function routePopupMessage(msg: PopupToWorker, deps: RouterDeps): Promise<WorkerToPopup | undefined> {
@@ -81,6 +84,12 @@ export async function routeContentMessage(
     }
     case "picker/action":
       await deps.onAction?.(msg.action, sender.tabId, stamp(msg.source, sender.frameId));
+      return undefined;
+    case "snap/data":
+      await deps.onSnapData?.(sender.tabId, msg);
+      return undefined;
+    case "snap/tainted":
+      await deps.onSnapTainted?.(sender.tabId, msg);
       return undefined;
     default:
       return undefined;

@@ -8,7 +8,8 @@ import type { WorkerToPopup, PopupToWorker } from "../core/messages";
 import { ERROR_COPY } from "../core/errors";
 import type { AudioMode, DownloadOptions, OutputFormat, VideoSource } from "../core/model";
 import type { SiteAccessResult } from "../platform/site-access";
-import { button, h, nextId, progress, radioCards, segmented, selectRow, switchControl, tabs, toast } from "../ui/components";
+import { BURST_CAP, DEFAULT_SNAP_OPTIONS, type SnapFormat, type SnapOptions } from "../core/snap";
+import { button, h, iconButton, nextId, progress, radioCards, segmented, selectRow, switchControl, tabs, toast } from "../ui/components";
 import type { Mode } from "./mode-memory";
 import { describeDownload, jobRowModel, qualityChoices, resumeBanner, type JobView } from "./model";
 
@@ -23,6 +24,8 @@ export interface PopupDeps {
   onModeChange(mode: Mode): void;
   /** True when the site is already allowed, so the Remember switch starts on. */
   hasAccess?: boolean;
+  /** Saved Screenshot-tab choices; `onChange` persists them for the shortcut and the on-video button. */
+  snap?: { options: SnapOptions; onChange(options: SnapOptions): void };
 }
 
 interface JobMeta extends JobView {
@@ -63,6 +66,9 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     resumable: [] as JobRecord[],
     bannerOpen: false,
     toast: undefined as string | undefined,
+    snap: deps.snap?.options ?? DEFAULT_SNAP_OPTIONS,
+    burstEvery: 5,
+    bursting: false,
   };
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
   const selected = () => s.sources.find((x) => x.id === s.selectedId) ?? s.sources[0];
@@ -193,10 +199,70 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     );
   }
 
+  function setSnap(patch: Partial<SnapOptions>) {
+    s.snap = { ...s.snap, ...patch };
+    deps.snap?.onChange(s.snap);
+  }
+
+  function screenshotPanel(src: VideoSource): HTMLElement {
+    const panel = h("div", { class: "rows" });
+    panel.append(
+      selectRow("snap-format", "Format", "snap-format", [{ value: "png", label: "PNG" }, { value: "jpeg", label: "JPEG" }, { value: "webp", label: "WEBP" }], s.snap.format, (v) => (setSnap({ format: v as SnapFormat }), render())),
+    );
+    if (s.snap.format !== "png") {
+      const out = h("output", { class: "estimate", for: "snap-quality" }, `${Math.round(s.snap.quality * 100)} %`);
+      const range = h("input", {
+        id: "snap-quality",
+        name: "snap-quality",
+        type: "range",
+        min: 10,
+        max: 100,
+        step: 5,
+        value: String(Math.round(s.snap.quality * 100)),
+        "data-key": "snap-quality",
+        onInput: (e) => {
+          const pct = Number((e.target as HTMLInputElement).value) || 92;
+          setSnap({ quality: pct / 100 });
+          out.textContent = `${pct} %`;
+        },
+      });
+      panel.append(h("div", { class: "row" }, h("label", { class: "row-label", for: "snap-quality" }, "Quality"), h("div", { class: "row-control" }, range, out)));
+    }
+    panel.append(
+      h("div", { class: "row" }, h("span", { class: "row-label" }, "Copy to clipboard"), switchControl("Copy to clipboard", s.snap.copy, () => (setSnap({ copy: !s.snap.copy }), render("snap-copy")), "snap-copy")),
+      h("div", { class: "row" }, h("span", { class: "row-label" }, "Snap button on videos"), switchControl("Snap button on videos", s.snap.showButton, () => (setSnap({ showButton: !s.snap.showButton }), render("snap-button")), "snap-button")),
+    );
+    const step = (dir: 1 | -1) => deps.post({ t: "snap/step", tabId: deps.tab.id, dir, sourceId: src.id });
+    panel.append(
+      h(
+        "div",
+        { class: "row" },
+        h("span", { class: "row-label" }, "Frame"),
+        h("span", { class: "actions" }, iconButton("◀", "Previous frame", () => step(-1), "snap-prev"), iconButton("▶", "Next frame", () => step(1), "snap-next")),
+      ),
+      h(
+        "div",
+        { class: "row row-stack" },
+        h("label", { class: "row-label", for: "burst-every" }, `Burst: snap every N seconds (up to ${BURST_CAP} frames)`),
+        h("input", { id: "burst-every", name: "burst-every", type: "number", min: 0.5, step: "0.5", value: String(s.burstEvery), "data-key": "burst-every", onInput: (e) => (s.burstEvery = Number((e.target as HTMLInputElement).value) || 1) }),
+      ),
+    );
+    const burstBtn = s.bursting
+      ? button("Stop burst", () => (deps.post({ t: "snap/burst-stop", tabId: deps.tab.id }), (s.bursting = false), render("burst")), { key: "burst" })
+      : button("Start burst", () => (deps.post({ t: "snap/burst", tabId: deps.tab.id, sourceId: src.id, intervalSec: s.burstEvery, options: s.snap }), (s.bursting = true), render("burst")), { key: "burst" });
+    return h(
+      "div",
+      { class: "rows" },
+      panel,
+      h("div", { class: "actions actions-main" }, button("Snap frame", () => deps.post({ t: "snap/frame", tabId: deps.tab.id, sourceId: src.id, options: s.snap }), { variant: "primary", key: "snap-frame" }), burstBtn),
+    );
+  }
+
   function singleView(src: VideoSource): HTMLElement {
     const panel = h("div", { class: "panel", role: "tabpanel", id: PANEL_ID, "aria-labelledby": `tab-${s.mode}`, tabindex: 0 });
     if (s.mode === "video") panel.append(videoPanel(src), actions(src, true));
-    else panel.append(h("p", { class: "shell" }, s.mode === "gif" ? "GIF maker is coming soon." : "Screenshot tools are coming soon."));
+    else if (s.mode === "screenshot") panel.append(screenshotPanel(src));
+    else panel.append(h("p", { class: "shell" }, "GIF maker is coming soon."));
     return h(
       "div",
       { class: "view" },
