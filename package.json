@@ -28,6 +28,7 @@
     "@vitest/browser": "^3.2.7",
     "eslint": "^10.15.0",
     "eslint-config-prettier": "^10.1.8",
+    "jsdom": "^31.0.1",
     "playwright": "^1.65.1",
     "prettier": "^3.10.1",
     "tsx": "^4.23.15",

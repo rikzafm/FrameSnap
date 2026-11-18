@@ -1,8 +1,26 @@
-import { isWorkerToContent, type ContentToWorker } from "../core/messages";
+import type { ContentToWorker } from "../core/messages";
+import { createDomDetector } from "./dom-detect";
+import { handleWorkerMessage } from "./handler";
+import { createPicker } from "./picker";
+
+const frameUrl = location.href;
+
+const send = (msg: ContentToWorker) => {
+  chrome.runtime.sendMessage(msg).catch(() => {});
+};
+
+const detector = createDomDetector({
+  document,
+  frameUrl,
+  emit: (sources) => send({ t: "dom/report", sources, frameUrl }),
+});
+detector.start();
+
+const picker = createPicker({ document, detector, send });
 
 chrome.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {
-  if (!isWorkerToContent(raw)) return false;
-  const pong: ContentToWorker = { t: "demo/pong", nonce: raw.nonce, reply: `content:${location.hostname}` };
-  sendResponse(pong);
+  const reply = handleWorkerMessage(raw, detector, frameUrl, picker);
+  if (!reply) return false;
+  sendResponse(reply);
   return false;
 });
