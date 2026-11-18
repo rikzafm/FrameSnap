@@ -121,6 +121,8 @@ runtime.onConnect.addListener((port) => {
   }
   if (parsePopupPortName(port.name) === undefined) return;
   popupPorts.add(port);
+  // a GIF that finished while no popup was open is still waiting for Save or Discard
+  for (const event of orchestrator.pendingGifs()) port.postMessage({ t: "job/event", event } satisfies WorkerToPopup);
   port.onDisconnect.addListener(() => popupPorts.delete(port));
   port.onMessage.addListener((raw: unknown) => {
     if (!isPopupToWorker(raw)) return;
@@ -131,6 +133,17 @@ runtime.onConnect.addListener((port) => {
     if (handlePopupSnap(snap, raw)) return;
     if (raw.t === "job/download") {
       void orchestrator.download({ tabId: raw.tabId, sourceId: raw.sourceId, options: raw.options as DownloadOptions }).catch(() => undefined);
+      return;
+    }
+    if (raw.t === "job/gif") {
+      void settingsStore()
+        .get()
+        .then((settings) => orchestrator.startGif({ tabId: raw.tabId, sourceId: raw.sourceId, options: raw.options, filenameTemplate: settings.filenameTemplate }))
+        .catch(() => undefined);
+      return;
+    }
+    if (raw.t === "job/save") {
+      void orchestrator.saveGif(raw.jobId).catch(() => undefined);
       return;
     }
     if (raw.t === "job/cancel") {
