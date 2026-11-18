@@ -37,7 +37,9 @@ export type ContentToWorker =
   | { t: "dom/report"; sources: VideoSource[]; frameUrl: string }
   | { t: "picker/picked"; source: VideoSource; resumeJobId?: string }
   | { t: "snap/data"; dataUrl: string; width: number; height: number; time: number; title: string }
-  | { t: "demo/pong"; nonce: string; reply: string };
+  | { t: "demo/pong"; nonce: string; reply: string }
+  /** JSON captured by the main-world network tap (X GraphQL). */
+  | { t: "net/tap"; payload: unknown; frameUrl: string };
 
 function isObj(x: unknown): x is Record<string, unknown> {
   return typeof x === "object" && x !== null;
@@ -123,6 +125,8 @@ export function isContentToWorker(x: unknown): x is ContentToWorker {
       return isVideoSource(x.source) && (x.resumeJobId === undefined || str(x.resumeJobId));
     case "snap/data":
       return typeof x.dataUrl === "string" && num(x.width) && num(x.height) && num(x.time) && typeof x.title === "string";
+    case "net/tap":
+      return isObj(x.payload) && str(x.frameUrl);
     case "demo/pong":
       return str(x.nonce) && typeof x.reply === "string";
     default:
