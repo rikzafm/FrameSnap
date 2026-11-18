@@ -255,6 +255,24 @@ describe('engine host', () => {
     void backend;
   });
 
+  it("assemble joins the chunks into one blob of the given type without running ffmpeg", async () => {
+    const { host, cdn, backend, urls, of } = setup();
+    const body = bytes(200 * KB);
+    cdn.put('/v.mp4', { body });
+    const t = track('https://cdn.test/v.mp4', 200 * KB);
+    await host.handle({ t: 'engine/fetch', jobId: 'j', tracks: [t] });
+    await host.handle({
+      t: 'engine/assemble',
+      jobId: 'j',
+      mime: 'video/mp4',
+      tracks: [{ trackId: '0', keys: t.chunks.map((c) => c.key) }],
+    });
+    const res = of('engine/result')[0]!;
+    expect(res).toMatchObject({ jobId: 'j', bytes: 200 * KB, mime: 'video/mp4' });
+    expect(new Uint8Array(await urls.get(res.url)!.arrayBuffer())).toEqual(body);
+    expect(backend.commands).toEqual([]);
+  });
+
   it("discard deletes the job's chunks", async () => {
     const store = new MemoryChunkStore();
     const { host, cdn } = setup(store);

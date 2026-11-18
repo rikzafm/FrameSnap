@@ -188,6 +188,14 @@ export function createEngineHost(deps: EngineHostDeps): EngineHost {
             return { blob };
           });
 
+        case 'engine/assemble':
+          return encode(msg.jobId, async () => {
+            const ref = msg.tracks[0]!;
+            return {
+              blob: await assembleTrack(storeFor(msg.jobId), msg.jobId, ref.trackId, ref.keys, msg.mime),
+            };
+          });
+
         case 'engine/gif':
           return encode(msg.jobId, async (signal, onProgress) => {
             const input = `in.${msg.track.container as Container}`;

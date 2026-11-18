@@ -8,6 +8,7 @@ import { parseMpd } from "../../src/core/media/dash";
 import type { VideoSource } from "../../src/core/model";
 import type { WorkerToPopup } from "../../src/core/messages";
 import * as fx from "../fixtures/hls-page";
+import * as xfx from "../fixtures/x-graphql";
 
 function memorySession(): SessionArea & { data: Record<string, unknown> } {
   const data: Record<string, unknown> = {};
@@ -75,7 +76,7 @@ describe("tab registry", () => {
   });
 });
 
-function setup(files: Record<string, string>, domReport?: VideoSource[]) {
+function setup(files: Record<string, string>, domReport?: VideoSource[], tabUrl: string = fx.PAGE_URL) {
   const registry = createTabRegistry(memorySession());
   const sniffer = createSniffer();
   const fetched: string[] = [];
@@ -83,7 +84,7 @@ function setup(files: Record<string, string>, domReport?: VideoSource[]) {
   const service = createMediaService({
     registry,
     sniffer,
-    getTab: async () => ({ url: fx.PAGE_URL, title: "Intro clip" }),
+    getTab: async () => ({ url: tabUrl, title: "Intro clip" }),
     scanDom: async () => domReport,
     adapterContext: {
       fetchText: async (url) => {
@@ -180,5 +181,29 @@ describe("site access for unlisted sites", () => {
     expect(await requestSiteAccess(3, fx.PAGE_URL, mk(false, false))).toBe("denied");
     expect(calls).toEqual(["request"]);
     expect(await requestSiteAccess(3, "chrome://extensions", mk(false, true))).toBe("unsupported");
+  });
+});
+
+describe("media service: pushed reports", () => {
+  const xPage = `https://x.com/someone/status/${xfx.TWEET_ID}`;
+
+  it("net/tap payloads reach the X adapter, accumulate per tab and are dropped on navigation", async () => {
+    const t = setup({}, undefined, xPage);
+    await t.service.onTap(5, xfx.detail3Bitrates);
+    expect((await t.registry.list(5)).map((s) => s.id)).toEqual([`x:${xfx.TWEET_ID}:${xfx.MEDIA_KEY}`]);
+
+    await t.service.onTap(5, xfx.timeline2Videos);
+    expect((await t.registry.list(5)).length).toBeGreaterThan(1);
+
+    await t.service.onNavigated(5, 0);
+    expect(await t.registry.list(5)).toEqual([]);
+    await t.service.onTap(5, xfx.gifTweet); // the old payloads are gone: only the new one is detected
+    expect((await t.registry.list(5)).length).toBe(1);
+  });
+
+  it("a pushed dom/report takes the sender's frame id", async () => {
+    const t = setup({});
+    await t.service.onDomReport(5, 3, [src("v1", { detectedBy: ["dom"], frameRef: { frameId: 0, elementKey: "e1" } })]);
+    expect((await t.registry.list(5))[0]!.frameRef).toEqual({ frameId: 3, elementKey: "e1" });
   });
 });

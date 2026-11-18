@@ -37,6 +37,10 @@ export const webRequest = {
 export const downloads = {
   download: (options: chrome.downloads.DownloadOptions) => chrome.downloads.download(options),
   search: (q: chrome.downloads.DownloadQuery) => chrome.downloads.search(q),
+  resume: (id: number) => chrome.downloads.resume(id),
+  cancel: (id: number) => chrome.downloads.cancel(id),
+  removeFile: (id: number) => chrome.downloads.removeFile(id),
+  erase: (q: chrome.downloads.DownloadQuery) => chrome.downloads.erase(q),
   onChanged: chrome.downloads.onChanged,
 };
 

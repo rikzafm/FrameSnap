@@ -29,6 +29,10 @@ describe('engine message guards', () => {
         seeks: [],
       }),
     ).toBe(false);
+    expect(
+      isWorkerToEngine({ t: 'engine/assemble', jobId: 'j', mime: 'video/mp4', tracks: [{ trackId: '0', keys: ['a'] }] }),
+    ).toBe(true);
+    expect(isWorkerToEngine({ t: 'engine/assemble', jobId: 'j', mime: 'video/mp4', tracks: [] })).toBe(false);
     expect(isWorkerToEngine({ t: 'bogus' })).toBe(false);
     expect(isWorkerToEngine(null)).toBe(false);
   });
