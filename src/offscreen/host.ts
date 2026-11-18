@@ -13,6 +13,7 @@ import type {
 } from '../core/engine-messages';
 import { buildDownloadArgs, buildGifArgs, type EngineInput } from '../core/ffmpeg-args';
 import { runFetchPhase, type FetchPhaseOptions, type HttpGet } from '../core/jobs/fetch-loop';
+import { selectEvictions, storeCap } from '../core/jobs/cleanup';
 import { assembleTrack, type ChunkStore } from '../core/jobs/store';
 import type { Container } from '../core/model';
 import type { Engine } from './engine';
@@ -59,6 +60,17 @@ export function createEngineHost(deps: EngineHostDeps): EngineHost {
     }
   };
 
+  /** Drop every stored chunk of a job. */
+  const forget = async (jobId: string): Promise<void> => {
+    await deps.memory.deleteJob(jobId);
+    inMemory.delete(jobId);
+    try {
+      await deps.opfs().deleteJob(jobId);
+    } catch {
+      // OPFS unavailable: nothing was stored there
+    }
+  };
+
   const begin = (jobId: string): AbortController => {
     controllers.get(jobId)?.abort();
     const ac = new AbortController();
@@ -85,6 +97,7 @@ export function createEngineHost(deps: EngineHostDeps): EngineHost {
 
   async function fetchPhase(msg: Extract<WorkerToEngine, { t: 'engine/fetch' }>): Promise<void> {
     const ac = begin(msg.jobId);
+    if (msg.fresh) await forget(msg.jobId);
     const run = (store: ChunkStore) =>
       runFetchPhase({
         jobId: msg.jobId,
@@ -221,18 +234,21 @@ export function createEngineHost(deps: EngineHostDeps): EngineHost {
 
         case 'engine/discard':
           controllers.get(msg.jobId)?.abort();
-          await deps.memory.deleteJob(msg.jobId);
-          inMemory.delete(msg.jobId);
-          try {
-            await deps.opfs().deleteJob(msg.jobId);
-          } catch {
-            // OPFS unavailable: nothing was stored there
-          }
+          await forget(msg.jobId);
           return;
 
         case 'engine/revoke':
           deps.blobUrls.revoke(msg.url);
           return;
+
+        case 'engine/sweep': {
+          const stored = await deps.opfs().jobs().catch(() => []);
+          const { quota } = await storage();
+          const evict = selectEvictions(stored, msg.records, msg.now, storeCap(quota || undefined));
+          for (const id of evict) await deps.opfs().deleteJob(id).catch(() => undefined);
+          send({ t: 'engine/swept', jobIds: evict });
+          return;
+        }
 
         case 'engine/storage':
           send({ t: 'engine/ready', storage: await storage() });

@@ -3,7 +3,7 @@
  * document. Every receiver runs the guard before trusting a payload.
  */
 import type { AppError } from "./errors";
-import type { JobPhase } from "./jobs/job";
+import type { JobPhase, JobRecord } from "./jobs/job";
 import type { DownloadOptions, GifOptions, VideoSource } from "./model";
 import type { Rect, SnapFormat, SnapOptions } from "./snap";
 
@@ -22,7 +22,7 @@ export type PopupToWorker =
   | { t: "demo/ping"; tabId: number; nonce: string };
 
 export type WorkerToPopup =
-  | { t: "media/updated"; tabId: number; sources: VideoSource[]; selectedId?: string }
+  | { t: "media/updated"; tabId: number; sources: VideoSource[]; selectedId?: string; /** Failed jobs resumable on this page (banner). */ resumable?: JobRecord[] }
   | { t: "job/event"; event: JobEvent }
   | { t: "demo/pong"; nonce: string; reply: string };
 
@@ -32,7 +32,9 @@ export type JobEvent =
   | { t: "done"; jobId: string; downloadId: number; filename: string }
   | { t: "failed"; jobId: string; error: AppError; resumable: boolean; keptRatio: number }
   | { t: "cancelled"; jobId: string }
-  | { t: "resume-needs-pick"; jobId: string };
+  | { t: "resume-needs-pick"; jobId: string }
+  /** A resume started over because the video changed (error copy `changed`). */
+  | { t: "notice"; jobId: string; code: "changed" };
 
 /** Service worker to a tab's content script (tabs.sendMessage). */
 export type WorkerToContent =
@@ -128,6 +130,8 @@ export function isJobEvent(x: unknown): x is JobEvent {
     case "cancelled":
     case "resume-needs-pick":
       return true;
+    case "notice":
+      return x.code === "changed";
     case "progress":
       return typeof x.phase === "string" && PHASES.has(x.phase) && num(x.ratio) && (x.bytes === undefined || num(x.bytes));
     case "done":
@@ -143,7 +147,7 @@ export function isWorkerToPopup(x: unknown): x is WorkerToPopup {
   if (!isObj(x) || typeof x.t !== "string") return false;
   switch (x.t) {
     case "media/updated":
-      return num(x.tabId) && isSources(x.sources) && (x.selectedId === undefined || str(x.selectedId));
+      return num(x.tabId) && isSources(x.sources) && (x.selectedId === undefined || str(x.selectedId)) && (x.resumable === undefined || (Array.isArray(x.resumable) && x.resumable.every((j) => isObj(j) && str(j.id))));
     case "job/event":
       return isJobEvent(x.event);
     case "demo/pong":

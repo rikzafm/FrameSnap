@@ -438,6 +438,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
         if (msg.tabId !== deps.tab.id) return;
         s.loaded = true;
         s.sources = msg.sources;
+        if (msg.resumable) s.resumable = msg.resumable;
         s.selectedId = msg.selectedId ?? (s.sources.some((x) => x.id === s.selectedId) ? s.selectedId : s.sources[0]?.id);
         render();
         return;
@@ -456,6 +457,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
           showToast(`Saved ${e.filename}`);
         } else if (e.t === "failed") s.jobs.set(e.jobId, { ...base, status: "failed", error: e.error, resumable: e.resumable, keptRatio: e.keptRatio });
         else if (e.t === "cancelled") s.jobs.set(e.jobId, { ...base, status: "cancelled" });
+        else if (e.t === "notice") showToast(ERROR_COPY[e.code].message);
         else if (e.t === "resume-needs-pick") {
           s.jobs.set(e.jobId, { ...base, status: "failed", error: { code: "not-found", message: ERROR_COPY["not-found"].message, retryable: true }, resumable: false });
           deps.post({ t: "picker/start", tabId: deps.tab.id, resumeJobId: e.jobId });
