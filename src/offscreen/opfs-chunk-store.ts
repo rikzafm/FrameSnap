@@ -2,11 +2,17 @@
  * ChunkStore on the Origin Private File System (offscreen document only).
  * Layout: /jobs/<jobId>/<trackId>/<chunkKey>
  *
- * Atomicity: FileSystemWritableFileStream writes to a swap file and only
- * replaces the target on close(). A crash before close() leaves no file, so
- * "file exists" always means "chunk complete".
+ * Atomicity: a chunk is written to `<key>.part`, and only a completed close()
+ * followed by a rename (`move`) gives it its real name. getFileHandle({create})
+ * makes an empty file at once, so writing straight to the final name would
+ * leave a bogus 0-byte chunk after an interruption. list() ignores `.part`
+ * files, so "file exists" always means "chunk complete".
  */
 import type { ChunkStore, StoredJob } from "../core/jobs/store";
+
+const PART = ".part";
+/** In-flight writes: our `.part`, and Chrome's own `.crswap` swap file for an open writable. */
+const isTemp = (name: string) => name.endsWith(PART) || name.endsWith(".crswap");
 
 async function dir(parent: FileSystemDirectoryHandle, name: string, create: boolean): Promise<FileSystemDirectoryHandle | undefined> {
   try {
@@ -35,20 +41,28 @@ export class OpfsChunkStore implements ChunkStore {
     const t = await this.track(jobId, trackId, false);
     if (!t) return out;
     for await (const [name, handle] of t.entries()) {
-      if (handle.kind === "file") out.set(name, (await (handle as FileSystemFileHandle).getFile()).size);
+      if (handle.kind === "file" && !isTemp(name)) out.set(name, (await (handle as FileSystemFileHandle).getFile()).size);
     }
     return out;
   }
 
   async write(jobId: string, trackId: string, key: string, data: Uint8Array): Promise<void> {
     const t = (await this.track(jobId, trackId, true))!;
-    const fh = await t.getFileHandle(key, { create: true });
-    const w = await fh.createWritable({ keepExistingData: false });
+    const partName = key + PART;
+    const fh = await t.getFileHandle(partName, { create: true });
     try {
-      await w.write(data as Uint8Array<ArrayBuffer>);
-      await w.close();
+      const w = await fh.createWritable({ keepExistingData: false });
+      try {
+        await w.write(data as Uint8Array<ArrayBuffer>);
+        await w.close();
+      } catch (err) {
+        await w.abort().catch(() => undefined);
+        throw err;
+      }
+      await t.removeEntry(key).catch(() => undefined); // re-writing a chunk replaces it
+      await (fh as FileSystemFileHandle & { move(name: string): Promise<void> }).move(key);
     } catch (err) {
-      await w.abort().catch(() => undefined);
+      await t.removeEntry(partName).catch(() => undefined);
       throw err;
     }
   }
