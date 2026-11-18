@@ -7,12 +7,11 @@ import { createPicker } from "./picker";
 import { createSnapper } from "./snap";
 import { createSnapButton, createSnapUi } from "./snap-ui";
 import { SNAP_PREFS_KEY, normalizeSnapOptions } from "../core/snap";
+import { localSettings, messaging } from "../platform/extension";
 
 const frameUrl = location.href;
 
-const send = (msg: ContentToWorker) => {
-  chrome.runtime.sendMessage(msg).catch(() => {});
-};
+const send = (msg: ContentToWorker) => messaging.send(msg);
 
 // MSE capture: the main-world hook (registered only on granted sites) reports streams over a nonce-checked channel.
 const mse = createMseClient(window, crypto.randomUUID());
@@ -48,15 +47,13 @@ const applyPrefs = (raw: unknown) => {
   snapPrefs = normalizeSnapOptions(raw);
   snapButton.setEnabled(snapPrefs.showButton);
 };
-chrome.storage.local
+localSettings
   .get(SNAP_PREFS_KEY)
-  .then((got) => applyPrefs(got[SNAP_PREFS_KEY]))
+  .then(applyPrefs)
   .catch(() => {});
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes[SNAP_PREFS_KEY]) applyPrefs(changes[SNAP_PREFS_KEY].newValue);
-});
+localSettings.watch(SNAP_PREFS_KEY, applyPrefs);
 
-chrome.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {
+messaging.onMessage((raw: unknown, _sender, sendResponse) => {
   if (isWorkerToContent(raw) && (raw.t === "capture/start" || raw.t === "capture/cancel" || raw.t === "capture/revoke")) {
     void captures.handle(raw);
     return false;

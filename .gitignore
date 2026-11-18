@@ -1,5 +1,6 @@
 .claude/
 .agent/
+.agents/
 node_modules/
 dist/
 dist-personal/

@@ -58,7 +58,7 @@ export function formatBytes(n: number): string {
   return `${n} B`;
 }
 
-const hostOf = (origin: string) => origin.replace(/^[a-z]+:\/\//i, "").replace(/\/\*$/, "");
+const originLabel = (origin: string) => origin.replace(/^[a-z]+:\/\//i, "").replace(/\/\*$/, "");
 
 export async function createOptions(root: HTMLElement, deps: OptionsDeps) {
   const s = {
@@ -205,7 +205,7 @@ export async function createOptions(root: HTMLElement, deps: OptionsDeps) {
   function sites(): HTMLElement {
     const list = h("ul", { class: "list" });
     for (const origin of s.sites) {
-      const host = hostOf(origin);
+      const host = originLabel(origin);
       list.append(
         h(
           "li",

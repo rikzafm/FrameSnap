@@ -15,6 +15,8 @@ type SnapTainted = Extract<ContentToWorker, { t: 'snap/tainted' }>;
 export interface SnapServiceDeps {
   sendToTab(tabId: number, message: WorkerToContent, frameId?: number): Promise<unknown>;
   findSource(tabId: number, sourceId: string): Promise<VideoSource | undefined>;
+  /** The tab's best video element (top of the ranking), for requests that name none, such as the shortcut. */
+  bestSource?(tabId: number): Promise<VideoSource | undefined>;
   getPrefs(): Promise<{ options: SnapOptions; template: string }>;
   download(url: string, filename: string): Promise<number>;
   captureVisibleTab(tabId: number): Promise<string>;
@@ -51,8 +53,9 @@ export interface SnapService {
 export function createSnapService(deps: SnapServiceDeps): SnapService {
   /** Frame and element to talk to; both absent when the source has no DOM element (broadcast instead). */
   async function targetOf(tabId: number, req: { sourceId?: string; source?: VideoSource }) {
-    const source =
-      req.source ?? (req.sourceId ? await deps.findSource(tabId, req.sourceId) : undefined);
+    const named = req.source ?? (req.sourceId ? await deps.findSource(tabId, req.sourceId) : undefined);
+    // nothing named: aim at one video, never every frame that holds one
+    const source = named ?? (req.sourceId ? undefined : await deps.bestSource?.(tabId));
     const key = source?.frameRef?.elementKey;
     return key ? { elementKey: key, frameId: source!.frameRef!.frameId } : {};
   }

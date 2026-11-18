@@ -5,6 +5,7 @@
 import type { ContentToWorker, PopupToWorker } from '../core/messages';
 import { SNAP_PREFS_KEY, cropRect, mimeOf, normalizeSnapOptions } from '../core/snap';
 import { downloads, storage, tabs } from '../platform/chrome';
+import { capture, commands } from '../platform/extension';
 import { settingsStore } from '../platform/settings-store';
 import { createSnapService, type SnapService } from './snap';
 import { createTabRegistry } from './registry';
@@ -24,6 +25,8 @@ export function createChromeSnapService(
   return createSnapService({
     sendToTab: (tabId, msg, frameId) => tabs.sendMessage(tabId, msg, frameId),
     findSource: async (tabId, id) => (await registry.list(tabId)).find((s) => s.id === id),
+    // the registry lists best first; only a video with a page element can be snapped
+    bestSource: async (tabId) => (await registry.list(tabId)).find((s) => s.frameRef?.elementKey),
     getPrefs: async () => ({
       options: normalizeSnapOptions((await storage.local.get(SNAP_PREFS_KEY))[SNAP_PREFS_KEY]),
       template: (await settingsStore().get()).filenameTemplate,
@@ -32,7 +35,7 @@ export function createChromeSnapService(
       downloads.download({ url, filename, conflictAction: 'uniquify', saveAs: false }),
     captureVisibleTab: async (tabId) => {
       const tab = await tabs.get(tabId);
-      return chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+      return capture.visibleTab(tab.windowId);
     },
     async cropImage(dataUrl, css, dpr, format, quality) {
       const bmp = await createImageBitmap(await (await fetch(dataUrl)).blob());
@@ -86,10 +89,10 @@ export function isSnapContentMessage(msg: ContentToWorker): boolean {
 
 /** The Alt+Shift+S command snaps the video on the active tab. */
 export function listenForSnapCommand(snap: SnapService): void {
-  chrome.commands.onCommand.addListener((command, tab) => {
+  commands.onCommand((command, tabId) => {
     if (command !== SNAP_COMMAND) return;
     const run = async () => {
-      const id = tab?.id ?? (await tabs.query({ active: true, currentWindow: true }))[0]?.id;
+      const id = tabId ?? (await tabs.query({ active: true, currentWindow: true }))[0]?.id;
       if (id !== undefined) await snap.frame(id, {});
     };
     void run().catch(() => undefined);

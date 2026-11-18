@@ -33,7 +33,9 @@ export type WorkerToEngine =
   | { t: "engine/revoke"; url: string }
   /** Housekeeping: drop the chunks `selectEvictions` picks for these records. */
   | { t: "engine/sweep"; records: SweepRecord[]; now: number }
-  | { t: "engine/storage" };
+  | { t: "engine/storage" }
+  /** Which jobs is the engine still running? Asked by a service worker that just restarted. */
+  | { t: "engine/status" };
 
 export interface StorageReport {
   usage: number;
@@ -51,7 +53,9 @@ export type EngineToWorker =
   | { t: "engine/result"; jobId: string; url: string; bytes: number; mime: string }
   | { t: "engine/error"; jobId: string; error: AppError; resumable: boolean }
   /** The sweep is done; these jobs' chunks were deleted. */
-  | { t: "engine/swept"; jobIds: string[] };
+  | { t: "engine/swept"; jobIds: string[] }
+  /** Answer to `engine/status`: jobs with a fetch or an encode in flight. */
+  | { t: "engine/running"; jobs: { jobId: string; phase: "fetch" | "engine" }[] };
 
 function isObj(x: unknown): x is Record<string, unknown> {
   return typeof x === "object" && x !== null;
@@ -79,6 +83,7 @@ export function isWorkerToEngine(x: unknown): x is WorkerToEngine {
     case "engine/sweep":
       return num(x.now) && Array.isArray(x.records) && x.records.every((r) => isObj(r) && str(r.id) && typeof r.status === "string" && typeof r.resumable === "boolean" && num(r.updatedAt));
     case "engine/storage":
+    case "engine/status":
       return true;
     default:
       return false;
@@ -90,6 +95,8 @@ export function isEngineToWorker(x: unknown): x is EngineToWorker {
   switch (x.t) {
     case "engine/swept":
       return Array.isArray(x.jobIds) && x.jobIds.every(str);
+    case "engine/running":
+      return Array.isArray(x.jobs) && x.jobs.every((j) => isObj(j) && str(j.jobId) && (j.phase === "fetch" || j.phase === "engine"));
     case "engine/ready":
       return isObj(x.storage) && num(x.storage.usage) && num(x.storage.quota) && typeof x.storage.persisted === "boolean";
     case "engine/commit":

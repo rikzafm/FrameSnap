@@ -1,6 +1,7 @@
 import { OpfsChunkStore } from "../offscreen/opfs-chunk-store";
 import { SNAP_PREFS_KEY, normalizeSnapOptions } from "../core/snap";
 import { downloads, permissions, storage, tabs } from "../platform/chrome";
+import { manifest } from "../platform/extension";
 import { settingsStore } from "../platform/settings-store";
 import { grantedSites, revokeSiteAccess } from "../platform/site-access";
 import { createModeMemory } from "../popup/mode-memory";
@@ -14,7 +15,7 @@ async function boot() {
   addEventListener("pagehide", () => data.flush());
 
   const memory = createModeMemory(storage.local);
-  const builtIn = chrome.runtime.getManifest().host_permissions ?? [];
+  const builtIn = manifest.hostPermissions();
   const siteDeps = { permissions: { getAll: () => permissions.getAll(), remove: permissions.remove } };
 
   await createOptions(root, {

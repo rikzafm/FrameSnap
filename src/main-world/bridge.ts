@@ -4,6 +4,7 @@
  * to the service worker.
  */
 import type { ContentToWorker } from "../core/messages";
+import { messaging } from "../platform/extension";
 import { createTapReceiver, TAP_INIT_CHANNEL } from "./protocol";
 
 const nonce = crypto.randomUUID();
@@ -16,7 +17,7 @@ window.addEventListener(
     origin: location.origin,
     onPayload: (payload) => {
       const msg: ContentToWorker = { t: "net/tap", payload, frameUrl: location.href };
-      chrome.runtime.sendMessage(msg).catch(() => {});
+      messaging.send(msg);
     },
   }),
 );
