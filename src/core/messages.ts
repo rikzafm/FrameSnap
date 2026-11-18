@@ -110,7 +110,8 @@ export function isWorkerToPopup(x: unknown): x is WorkerToPopup {
 }
 
 export function isWorkerToContent(x: unknown): x is WorkerToContent {
-  return isObj(x) && ((x.t === "demo/ping" && str(x.nonce)) || x.t === "dom/scan");
+  if (!isObj(x)) return false;
+  return x.t === "dom/scan" || (x.t === "demo/ping" && str(x.nonce));
 }
 
 export function isContentToWorker(x: unknown): x is ContentToWorker {

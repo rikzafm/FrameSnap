@@ -24,7 +24,7 @@ Built test-first at these seams: generic adapter `detect`/`resolve` (pure, fixtu
 - `src/background/sniffer.ts`: observe-only; extensions + media content types, Content-Length / Accept-Ranges / ETag, range requests collapsed (total from Content-Range), cleared on top-frame navigation.
 - `src/background/registry.ts`: per-tab `mergeAll` + `rankSources`, mirrored to `chrome.storage.session`, serialised writes, restores after SW restart.
 - `src/background/media-service.ts`: popup open sends the cached list, then DOM scan + manifest expansion, then the refreshed list. Wired in `src/background/index.ts` (`media/list`, `webRequest.onHeadersReceived`, tab loading/removal).
-- `src/content/scan.ts` + `dom/scan` message (`src/core/messages.ts`): content script reports DOM sources through the page's adapter.
+- DOM scan: the service worker sends `dom/scan` to the tab; the content script's ticket 04 detector replies with `dom/report`, and its sources are merged into the registry.
 - `src/platform/site-access.ts`: `requestSiteAccess` (`permissions.request` for unlisted origins, then injects the content script). Must be called from a popup click; the popup wiring belongs to the popup ticket.
 - Fix in `src/core/rank.ts`: DASH variants share the MPD URL, so variant dedupe now keys on URL + id for `dash` (otherwise all representations collapsed into one).
 - Tests: `tests/unit/{generic-adapter,sniffer,media-service}.test.ts`, fixtures in `tests/fixtures/hls-page.ts`. The HLS fixture lists variants with resolution and size estimate with no network wait.
