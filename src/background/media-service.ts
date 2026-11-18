@@ -24,14 +24,22 @@ export interface MediaService {
   onResponse(d: ResponseDetails): Promise<void>;
   onNavigated(tabId: number, frameId: number): Promise<void>;
   onRemoved(tabId: number): Promise<void>;
+  /** JSON captured by the page's main-world network tap (`net/tap`); kept per tab and fed to the adapter. */
+  onTap(tabId: number, payload: unknown): Promise<void>;
+  /** A content script's pushed `dom/report`. The sender's frame id replaces the placeholder in each frameRef. */
+  onDomReport(tabId: number, frameId: number, sources: readonly VideoSource[]): Promise<void>;
   /** Cached list first, then a refresh (DOM scan + manifest expansion). */
   openPopup(tabId: number, post: (m: WorkerToPopup) => void): Promise<void>;
 }
+
+const MAX_TAPPED = 50;
 
 const unresolved = (s: VideoSource) => s.variants.some((v) => (v.kind === "hls" || v.kind === "dash") && v.live === undefined);
 
 export function createMediaService(deps: MediaServiceDeps): MediaService {
   const { registry, sniffer } = deps;
+  /** Tapped payloads per tab, newest last. A tweet page can fire many GraphQL calls. */
+  const tapped = new Map<number, unknown[]>();
 
   const message = (tabId: number, sources: VideoSource[]): WorkerToPopup => ({
     t: "media/updated",
@@ -53,15 +61,40 @@ export function createMediaService(deps: MediaServiceDeps): MediaService {
       if (!hit) return;
       const tab = await deps.getTab(d.tabId);
       if (!tab?.url) return;
-      const finds = pickAdapter(tab.url).detect({ pageUrl: tab.url, pageTitle: tab.title ?? "", domVideos: [], network: [hit] });
+      const finds = pickAdapter(tab.url).detect({
+        pageUrl: tab.url,
+        pageTitle: tab.title ?? "",
+        domVideos: [],
+        network: [hit],
+        ...(tapped.has(d.tabId) ? { tapped: tapped.get(d.tabId)! } : {}),
+      });
       if (finds.length) await registry.ingest(d.tabId, finds);
+    },
+    async onTap(tabId, payload) {
+      const list = [...(tapped.get(tabId) ?? []), payload].slice(-MAX_TAPPED);
+      tapped.set(tabId, list);
+      const tab = await deps.getTab(tabId);
+      if (!tab?.url) return;
+      const finds = pickAdapter(tab.url).detect({ pageUrl: tab.url, pageTitle: tab.title ?? "", domVideos: [], network: [], tapped: list });
+      if (finds.length) await registry.ingest(tabId, finds);
+    },
+    async onDomReport(tabId, frameId, sources) {
+      if (sources.length === 0) return;
+      await registry.ingest(
+        tabId,
+        sources.map((s) => (s.frameRef ? { ...s, frameRef: { ...s.frameRef, frameId } } : s)),
+      );
     },
     async onNavigated(tabId, frameId) {
       sniffer.navigated(tabId, frameId);
-      if (frameId === 0) await registry.clear(tabId);
+      if (frameId === 0) {
+        tapped.delete(tabId);
+        await registry.clear(tabId);
+      }
     },
     async onRemoved(tabId) {
       sniffer.removed(tabId);
+      tapped.delete(tabId);
       await registry.clear(tabId);
     },
     async openPopup(tabId, post) {
