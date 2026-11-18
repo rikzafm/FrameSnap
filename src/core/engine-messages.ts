@@ -21,6 +21,8 @@ export type WorkerToEngine =
   | { t: "engine/fetch"; jobId: string; tracks: TrackPlan[]; headers?: Record<string, string>; validators?: Record<string, TrackValidators> }
   /** Assemble the fetched tracks and run the download command line. */
   | { t: "engine/download"; jobId: string; plan: DownloadPlan; tracks: EngineTrackRef[]; seeks: (Seek | undefined)[] }
+  /** Join the first track's chunks into one file without ffmpeg (plan.needsEngine is false). */
+  | { t: "engine/assemble"; jobId: string; mime: string; tracks: EngineTrackRef[] }
   /** Assemble one track and render a GIF in two passes. */
   | { t: "engine/gif"; jobId: string; options: GifOptions; src: { width: number; height: number }; track: EngineTrackRef & { container: string }; seek: Seek }
   | { t: "engine/cancel"; jobId: string }
@@ -60,6 +62,8 @@ export function isWorkerToEngine(x: unknown): x is WorkerToEngine {
       return str(x.jobId) && Array.isArray(x.tracks) && x.tracks.every((t) => isObj(t) && str(t.trackId) && Array.isArray(t.chunks));
     case "engine/download":
       return str(x.jobId) && isObj(x.plan) && Array.isArray(x.tracks) && x.tracks.every(isRef) && Array.isArray(x.seeks);
+    case "engine/assemble":
+      return str(x.jobId) && typeof x.mime === "string" && Array.isArray(x.tracks) && x.tracks.length > 0 && x.tracks.every(isRef);
     case "engine/gif":
       return str(x.jobId) && isObj(x.options) && isObj(x.src) && isObj(x.track) && isRef(x.track) && isObj(x.seek);
     case "engine/cancel":
