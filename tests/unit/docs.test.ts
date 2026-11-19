@@ -6,11 +6,11 @@ const read = (p: string) => readFileSync(p, 'utf8');
 
 describe('docs/store/permissions.md', () => {
   const doc = read('docs/store/permissions.md');
-  const store = buildManifest({ youtube: false });
+  const manifest = buildManifest();
 
-  it('explains every permission the store build requests, one bullet each', () => {
+  it('explains every permission the extension requests, one bullet each', () => {
     for (const p of [
-      ...store.permissions,
+      ...manifest.permissions,
       'optional_host_permissions',
       'host_permissions',
       'content_scripts',
@@ -28,18 +28,18 @@ describe('docs/store/permissions.md', () => {
     expect(doc).toMatch(/`storage`[^\n]*(resum|partial)[^\n]*7 days/i);
   });
 
-  it('does not mention YouTube, which the store build does not contain', () => {
-    expect(doc).not.toMatch(/youtube|googlevideo/i);
+  it('explains the YouTube hosts', () => {
+    expect(doc).toMatch(/youtube\.com/i);
+    expect(doc).toMatch(/googlevideo\.com/i);
   });
 });
 
 describe('README.md', () => {
   const readme = read('README.md');
 
-  it('documents loading unpacked, both builds and the privacy stance', () => {
+  it('documents loading unpacked, the build and the privacy stance', () => {
     expect(readme).toMatch(/Load unpacked/);
     expect(readme).toMatch(/npm run build\b/);
-    expect(readme).toMatch(/npm run build:personal/);
     expect(readme).toMatch(/## Privacy/);
   });
 

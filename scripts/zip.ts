@@ -7,7 +7,6 @@ import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'n
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { crc32, deflateRawSync } from 'node:zlib';
-import { findYoutubeLeaks } from './check-store-build';
 
 export interface ZipEntry {
   name: string;
@@ -89,14 +88,6 @@ if (process.argv[1] && /[\\/]zip\.ts$/.test(process.argv[1])) {
   const out = resolve(
     process.argv[3] ?? join(root, 'release', `frame-snap-${manifest.version}.zip`),
   );
-  // a store package must never carry YouTube code (spec section 8)
-  if (!/dist-personal/.test(dir)) {
-    const leaks = findYoutubeLeaks(dir);
-    if (leaks.length) {
-      console.error(`Refusing to zip: YouTube strings in ${dir}\n${leaks.join('\n')}`);
-      process.exit(1);
-    }
-  }
   mkdirSync(dirname(out), { recursive: true });
   const files = collectFiles(dir);
   writeFileSync(out, createZip(files));

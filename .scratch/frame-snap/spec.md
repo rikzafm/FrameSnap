@@ -18,7 +18,7 @@ download can be resumed later, even after the page is refreshed or the browser r
 |---|---|---|
 | Q1 | Bundler | Vite + `@crxjs/vite-plugin` |
 | Q2 | Firefox | Chrome/Chromium only for v1. Browser APIs stay behind `src/platform/`. |
-| Q3 | YouTube adapter | Personal build only (`build:personal`). The store build contains no YouTube code or host permissions. |
+| Q3 | YouTube adapter | Included in the single build (`npm run build`, `dist/`). The extension is not published to the Chrome Web Store, so there is no separate store build. |
 | Q4 | ffmpeg.wasm licence | `@ffmpeg/core` includes libx264 (GPL), so the repo relicenses from MIT to GPL-3.0 (ticket 01). |
 | Q5 | Theme setting | Light / Dark / System. The dark palette is derived from Paper Ink, and the owner signs off on it. |
 | Q6 | GIF from the in-page bar | `chrome.action.openPopup()` on the GIF tab, with that video selected. |

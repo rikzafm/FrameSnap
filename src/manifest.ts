@@ -1,8 +1,3 @@
-export interface ManifestOptions {
-  /** Personal build only: adds the YouTube host permissions. */
-  youtube: boolean;
-}
-
 const SITE_HOSTS = [
   '*://*.reddit.com/*',
   '*://*.redd.it/*',
@@ -21,7 +16,7 @@ const YOUTUBE_MATCHES = ['*://*.youtube.com/*'];
 
 const YOUTUBE_HOSTS = ['*://*.youtube.com/*', '*://*.googlevideo.com/*'];
 
-export function buildManifest({ youtube }: ManifestOptions) {
+export function buildManifest() {
   return {
     manifest_version: 3 as const,
     name: 'Frame Snap',
@@ -66,22 +61,18 @@ export function buildManifest({ youtube }: ManifestOptions) {
         js: ['src/main-world/bridge.ts'],
         run_at: 'document_start' as const,
       },
-      // Personal build only: main-world player-response reader plus the shared isolated-world bridge.
-      ...(youtube
-        ? [
-            {
-              matches: YOUTUBE_MATCHES,
-              js: ['src/main-world/youtube-main.ts'],
-              run_at: 'document_start' as const,
-              world: 'MAIN' as const,
-            },
-            {
-              matches: YOUTUBE_MATCHES,
-              js: ['src/main-world/bridge.ts'],
-              run_at: 'document_start' as const,
-            },
-          ]
-        : []),
+      // YouTube: main-world player-response reader plus the shared isolated-world bridge.
+      {
+        matches: YOUTUBE_MATCHES,
+        js: ['src/main-world/youtube-main.ts'],
+        run_at: 'document_start' as const,
+        world: 'MAIN' as const,
+      },
+      {
+        matches: YOUTUBE_MATCHES,
+        js: ['src/main-world/bridge.ts'],
+        run_at: 'document_start' as const,
+      },
     ],
     permissions: [
       'activeTab',
@@ -94,7 +85,7 @@ export function buildManifest({ youtube }: ManifestOptions) {
       'alarms',
       'declarativeNetRequestWithHostAccess',
     ],
-    host_permissions: youtube ? [...SITE_HOSTS, ...YOUTUBE_HOSTS] : [...SITE_HOSTS],
+    host_permissions: [...SITE_HOSTS, ...YOUTUBE_HOSTS],
     optional_host_permissions: ['<all_urls>'],
     commands: {
       _execute_action: {

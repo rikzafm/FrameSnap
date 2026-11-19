@@ -1,4 +1,4 @@
-/** Main-world entry for youtube.com (personal build only). Posts the player response to the bridge. */
+/** Main-world entry for youtube.com. Posts the player response to the bridge. */
 import { YT_TAP_KIND } from '../adapters/youtube';
 import { TAP_CHANNEL, TAP_INIT_CHANNEL } from './protocol';
 import { readPlayerResponse } from './youtube-reader';

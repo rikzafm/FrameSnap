@@ -52,4 +52,20 @@ describe("foldCaptureDuplicates", () => {
     const progressive = element({ variants: [{ id: "u", kind: "progressive", url: "https://cdn/x.mp4", container: "mp4", hasAudio: true }] });
     expect(foldCaptureDuplicates([progressive, adapter()])).toHaveLength(2);
   });
+
+  it("lets the page's main video claim the largest element while an ad plays in it", () => {
+    const main = adapter({ mainVideo: true });
+    const ad = element({ duration: 15 });
+    const out = rankSources([ad, main]);
+    expect(out.map((s) => s.id)).toEqual(["youtube:abc"]);
+    expect(out[0]!.frameRef).toEqual({ frameId: 0, elementKey: "e1" });
+    // a smaller element (a hover preview) stays listed, below the main video
+    const preview = element({ id: "dom:2", duration: 20, dom: { ...dom, rectWidth: 300, rectHeight: 170 }, frameRef: { frameId: 0, elementKey: "e2" } });
+    const out2 = rankSources([preview, ad, main]);
+    expect(out2.map((s) => s.id)).toEqual(["youtube:abc", "dom:2"]);
+  });
+
+  it("without the main-video mark, a length mismatch still leaves both", () => {
+    expect(foldCaptureDuplicates([element({ duration: 15 }), adapter()])).toHaveLength(2);
+  });
 });

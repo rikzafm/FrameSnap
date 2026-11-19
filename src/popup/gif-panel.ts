@@ -194,7 +194,7 @@ function strip(p: StripProps): HTMLElement {
   return el;
 }
 
-const rangeText = (t: TrimRange) => `Range: ${sec(t.start)} to ${sec(t.end)} (${sec(t.end - t.start)}, up to ${GIF_MAX_SECONDS} s)`;
+const rangeText = (t: TrimRange) => `${sec(t.start)} → ${sec(t.end)}`;
 
 export function gifPanel(p: GifPanelProps): HTMLElement {
   const { src, choices: c } = p;
@@ -207,14 +207,14 @@ export function gifPanel(p: GifPanelProps): HTMLElement {
     /* no playable variant: the estimate falls back to 16:9 */
   }
   const estimateText = (trim: TrimRange) => `Estimated size ${describeGif({ ...gifOptions(c), trim }, size).range}`;
-  const label = h("span", { class: "row-label" }, rangeText(c.trim));
+  const label = h("span", { class: "gif-range-value" }, rangeText(c.trim));
   const estimate = h("p", { class: "estimate gif-estimate", role: "status" }, estimateText(c.trim));
 
   panel.append(
     h(
       "div",
-      { class: "row row-stack" },
-      label,
+      { class: "row row-stack gif-range-row" },
+      h("div", { class: "gif-range-head" }, h("span", { class: "row-label" }, "Range"), h("span", { class: "gif-range-meta" }, label, h("span", { class: "gif-range-max" }, ` · max ${GIF_MAX_SECONDS} s`))),
       strip({
         src,
         trim: c.trim,

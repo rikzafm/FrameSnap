@@ -8,9 +8,7 @@
   "scripts": {
     "dev": "vite",
     "icons": "tsx scripts/build-icons.ts",
-    "check:store": "tsx scripts/check-store-build.ts dist",
     "build": "npm run icons && vite build",
-    "build:personal": "npm run icons && vite build --mode personal --outDir dist-personal",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -20,8 +18,7 @@
     "test:browser": "vitest run --config vitest.browser.config.ts",
     "test:watch": "vitest",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
-    "zip": "npm run build && npm run check:store && tsx scripts/zip.ts dist",
-    "zip:personal": "npm run build:personal && tsx scripts/zip.ts dist-personal release/frame-snap-personal-0.1.0.zip",
+    "zip": "npm run build && tsx scripts/zip.ts dist",
     "store:assets": "tsx scripts/store-assets.ts"
   },
   "devDependencies": {

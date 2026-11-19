@@ -80,9 +80,27 @@ describe("youtube adapter", () => {
   it("ignores unplayable, live and malformed payloads", () => {
     const bad = { ...playerResponse, playabilityStatus: { status: "LOGIN_REQUIRED" } };
     const live = { ...playerResponse, videoDetails: { ...playerResponse.videoDetails, isLive: true } };
-    expect(youtubeAdapter.detect(ctx({ tapped: [{ kind: "youtube-player", response: bad }] }))).toEqual([]);
-    expect(youtubeAdapter.detect(ctx({ tapped: [{ kind: "youtube-player", response: live }] }))).toEqual([]);
-    expect(youtubeAdapter.detect(ctx({ tapped: [null, 5, { kind: "youtube-player" }, { foo: 1 }] }))).toEqual([]);
+    const home = "https://www.youtube.com/";
+    expect(youtubeAdapter.detect(ctx({ pageUrl: home, tapped: [{ kind: "youtube-player", response: bad }] }))).toEqual([]);
+    expect(youtubeAdapter.detect(ctx({ pageUrl: home, tapped: [{ kind: "youtube-player", response: live }] }))).toEqual([]);
+    expect(youtubeAdapter.detect(ctx({ pageUrl: home, tapped: [null, 5, { kind: "youtube-player" }, { foo: 1 }] }))).toEqual([]);
+    // on a watch page only the URL's own video is left, still to be looked up
+    const [stub, ...rest] = youtubeAdapter.detect(ctx({ tapped: [{ kind: "youtube-player", response: bad }] }));
+    expect(rest).toEqual([]);
+    expect(stub!.variants).toEqual([]);
+  });
+
+  it("names the watch page's video from the URL alone, before any page payload", () => {
+    const [src, ...rest] = youtubeAdapter.detect(ctx({ pageTitle: "(3) A talk - YouTube", tapped: [] }));
+    expect(rest).toEqual([]);
+    expect(src).toMatchObject({ id: `youtube:${VID}`, title: "A talk", mainVideo: true, variants: [] });
+    expect(youtubeAdapter.needsResolve!(src!)).toBe(true);
+  });
+
+  it("ignores a payload for another video on a watch page (an ad's player response)", () => {
+    const ad = { ...playerResponse, videoDetails: { ...playerResponse.videoDetails, videoId: "adAdAdAdAdA" } };
+    const out = youtubeAdapter.detect(ctx({ tapped: [{ kind: "youtube-player", response: ad }] }));
+    expect(out.map((s) => s.id)).toEqual([`youtube:${VID}`]);
   });
 
   it("uses the newest payload when the same video is tapped twice", () => {
@@ -137,6 +155,15 @@ function adapterCtx(over: Partial<AdapterContext> = {}): AdapterContext & { post
     ...over,
   };
 }
+
+describe("youtube main video", () => {
+  const detectOn = (pageUrl: string) => youtubeAdapter.detect(ctx({ pageUrl, tapped: [{ kind: "youtube-player", response: sabrOnly }] }))[0]!;
+  it("marks the source the page URL shows as the page's main video", () => {
+    expect(detectOn(`https://www.youtube.com/watch?v=${VID}&t=4`).mainVideo).toBe(true);
+    expect(detectOn(`https://www.youtube.com/shorts/${VID}`).mainVideo).toBe(true);
+    expect(detectOn("https://www.youtube.com/").mainVideo).toBeUndefined();
+  });
+});
 
 describe("youtube VISIONOS lookup", () => {
   const sabrSource = (): VideoSource => youtubeAdapter.detect(ctx({ tapped: [{ kind: "youtube-player", response: sabrOnly }] }))[0]!;
@@ -316,10 +343,8 @@ describe("youtube VISIONOS lookup", () => {
   });
 });
 
-describe("youtube build gating", () => {
-  it("registers YouTube content scripts only in the personal manifest", () => {
-    const has = (m: ReturnType<typeof buildManifest>) => JSON.stringify(m.content_scripts).includes("youtube");
-    expect(has(buildManifest({ youtube: false }))).toBe(false);
-    expect(has(buildManifest({ youtube: true }))).toBe(true);
+describe("youtube manifest", () => {
+  it("registers the YouTube content scripts", () => {
+    expect(JSON.stringify(buildManifest().content_scripts)).toContain("youtube");
   });
 });

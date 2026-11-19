@@ -1,6 +1,6 @@
 # Permissions
 
-Why the store build asks for each permission. Nothing here is used to send data anywhere: network
+Why the extension asks for each permission. Nothing here is used to send data anywhere: network
 requests go only to the hosts of the media the user chose (spec section 8).
 
 ## Permissions
@@ -17,9 +17,9 @@ requests go only to the hosts of the media the user chose (spec section 8).
 
 ## Hosts and content scripts
 
-- `host_permissions`: the supported sites (Reddit, X/Twitter, Discord) and their media hosts, so detection and downloads work on them from the first visit.
+- `host_permissions`: the supported sites (Reddit, X/Twitter, Discord, YouTube) and their media hosts (including youtube.com and googlevideo.com), so detection and downloads work on them from the first visit.
 - `optional_host_permissions`: `<all_urls>`, requested one site at a time only when the user turns on "Remember this site" or grants access for a blob or captured video. Options lists every granted site with a Revoke button.
-- `content_scripts`: one script on all pages that only looks for `<video>` elements and answers the popup; it does not read page text or send anything on its own. It is declared statically on `<all_urls>` (in every frame, including same-origin iframes) so that a video is already known when the popup opens on any site; the alternative, registering it only for granted sites, would make the first popup on a new site empty (tickets 01 and 04). The X network tap and its bridge run on x.com and twitter.com only.
+- `content_scripts`: one script on all pages that only looks for `<video>` elements and answers the popup; it does not read page text or send anything on its own. It is declared statically on `<all_urls>` (in every frame, including same-origin iframes) so that a video is already known when the popup opens on any site; the alternative, registering it only for granted sites, would make the first popup on a new site empty (tickets 01 and 04). The X network tap and its bridge run on x.com and twitter.com only; the YouTube player-response reader and its bridge run on youtube.com only.
 
 ## Keyboard shortcuts
 

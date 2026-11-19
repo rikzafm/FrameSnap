@@ -1,7 +1,7 @@
 # Frame Snap
 
 A Chrome extension (Manifest V3) that downloads video, makes GIFs and snaps frames. It supports
-Reddit, X (Twitter) and Discord, plus any page with a plain video, and everything runs locally in
+Reddit, X (Twitter), Discord and YouTube, plus any page with a plain video, and everything runs locally in
 your browser. Licensed GPL-3.0-or-later.
 
 - **Video**: pick a quality, format (MP4, WebM, MKV, MOV, MP3, M4A), audio and an optional trim.
@@ -27,17 +27,10 @@ npm install
 
 After a rebuild, press the reload button on the extension card.
 
-## Two builds: store and personal
+## Packaging
 
-| | Command | Output | YouTube |
-|---|---|---|---|
-| Store | `npm run build` | `dist/` | No code, hosts or strings (checked by `npm run check:store`) |
-| Personal | `npm run build:personal` | `dist-personal/` | Adapter and hosts included |
-
-The store build is what goes on the Chrome Web Store. The personal build is for your own use; load
-`dist-personal/` the same way. `npm run zip` builds the store version, runs the YouTube check and
-writes `release/frame-snap-<version>.zip`; `npm run store:assets` makes the store images from the
-logo into `release/store-assets/`.
+`npm run zip` builds and writes `release/frame-snap-<version>.zip`; `npm run store:assets` makes
+the store images from the logo into `release/store-assets/`.
 
 ## Privacy
 

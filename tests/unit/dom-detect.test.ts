@@ -61,6 +61,17 @@ describe("dom detector", () => {
     expect(isContentToWorker({ t: "dom/report", sources: [s], frameUrl: PAGE })).toBe(true);
   });
 
+  it("reports the page URL as it is now, after a single-page navigation", () => {
+    document.body.innerHTML = "";
+    document.body.append(stubVideo(document.createElement("video"), { src: "https://cdn.test/a.mp4" }));
+    let url = "https://www.youtube.com/results?search_query=x";
+    const d = createDomDetector({ document, frameUrl: () => url, emit: () => {} });
+    expect(d.scan()[0]!.pageUrl).toBe(url);
+    url = "https://www.youtube.com/watch?v=abcdefghijk";
+    expect(d.scan()[0]!.pageUrl).toBe("https://www.youtube.com/watch?v=abcdefghijk");
+    expect(handleWorkerMessage({ t: "dom/scan" }, d, () => url)).toMatchObject({ frameUrl: url });
+  });
+
   it("reports the playhead so the GIF tab can start there", () => {
     document.body.innerHTML = "";
     const v = stubVideo(document.createElement("video"), { src: "https://cdn.test/a.mp4", duration: 60 });
@@ -159,7 +170,7 @@ describe("content message handling", () => {
 
 describe("manifest", () => {
   it("runs the content script in every frame, including about:blank children", () => {
-    const cs = buildManifest({ youtube: false }).content_scripts[0] as Record<string, unknown>;
+    const cs = buildManifest().content_scripts[0] as Record<string, unknown>;
     expect(cs.all_frames).toBe(true);
     expect(cs.match_origin_as_fallback).toBe(true);
   });

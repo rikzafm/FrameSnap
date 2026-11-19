@@ -24,22 +24,31 @@ const isCapture = (v: Variant) => v.kind === "mse-capture" || v.kind === "record
  * capture or recording. When exactly one adapter find on the page matches the
  * element's length, it takes the element's DOM facts and the element's
  * capture-only entry is dropped, so the downloadable one is listed and ranked
- * as the visible video.
+ * as the visible video. Failing a length match, a find marked `mainVideo`
+ * claims the page's largest capture-only element (an ad may be playing in it).
  */
 export function foldCaptureDuplicates(sources: readonly VideoSource[]): VideoSource[] {
+  const captureOnly = (s: VideoSource) => !!s.dom && s.variants.length > 0 && s.variants.every(isCapture);
+  const area = (s: VideoSource) => (s.dom ? s.dom.rectWidth * s.dom.rectHeight * s.dom.visibleRatio : 0);
+  const downloadable = (s: VideoSource, cap: VideoSource) =>
+    s !== cap &&
+    s.detectedBy.includes("adapter") &&
+    s.pageUrl === cap.pageUrl &&
+    s.variants.length > 0 &&
+    !s.variants.some(isCapture);
   const out = [...sources];
   for (const cap of sources) {
-    if (!cap.dom || cap.variants.length === 0 || !cap.variants.every(isCapture) || !cap.duration) continue;
-    const matches = out.filter(
-      (s) =>
-        s !== cap &&
-        s.detectedBy.includes("adapter") &&
-        s.pageUrl === cap.pageUrl &&
-        s.variants.length > 0 &&
-        !s.variants.some(isCapture) &&
-        s.duration !== undefined &&
-        Math.abs(s.duration - cap.duration!) <= 1.5,
-    );
+    if (!captureOnly(cap)) continue;
+    let matches = cap.duration
+      ? out.filter((s) => downloadable(s, cap) && s.duration !== undefined && Math.abs(s.duration - cap.duration!) <= 1.5)
+      : [];
+    if (matches.length !== 1) {
+      const largest = sources
+        .filter((s) => captureOnly(s) && s.pageUrl === cap.pageUrl)
+        .every((s) => s === cap || area(s) < area(cap));
+      const mains = out.filter((s) => downloadable(s, cap) && s.mainVideo && !s.dom);
+      matches = largest ? mains : [];
+    }
     if (matches.length !== 1) continue;
     const target = matches[0]!;
     out[out.indexOf(target)] = { ...target, dom: target.dom ?? cap.dom, frameRef: target.frameRef ?? cap.frameRef };

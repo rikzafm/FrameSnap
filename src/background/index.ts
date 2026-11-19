@@ -54,7 +54,7 @@ const media = createMediaService({
   },
   adapterContext: {
     fetchText: (url, headers) => fetchText(fetch, url, headers),
-    ...(__YOUTUBE__ ? { postJson: createPostJson({ fetch: (url, init) => fetch(url, init), dnr }) } : {}),
+    postJson: createPostJson({ fetch: (url, init) => fetch(url, init), dnr }),
     parseMaster,
     parseMedia,
     parseMpd,

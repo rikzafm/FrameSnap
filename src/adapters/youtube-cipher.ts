@@ -1,5 +1,5 @@
 /**
- * Signature cipher for the TV client fallback (personal build only), ported
+ * Signature cipher for the TV client fallback, ported
  * from YoutubeExplode (Bridge/PlayerSource.cs, Bridge/Cipher/*).
  *
  * A TV player response carries formats whose URL sits in `signatureCipher`

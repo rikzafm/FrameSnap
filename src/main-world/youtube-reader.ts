@@ -1,4 +1,4 @@
-/** Reads the current player response in the page's main world (personal build only). */
+/** Reads the current player response in the page's main world. */
 export function readPlayerResponse(
   win: unknown,
   doc: { querySelector(s: string): unknown },

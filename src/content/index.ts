@@ -9,7 +9,8 @@ import { createSnapButton, createSnapUi } from "./snap-ui";
 import { SNAP_PREFS_KEY, normalizeSnapOptions } from "../core/snap";
 import { localSettings, messaging } from "../platform/extension";
 
-const frameUrl = location.href;
+// read on use: a single-page site (YouTube) moves to another video without reloading this script
+const frameUrl = (): string => location.href;
 
 const send = (msg: ContentToWorker) => messaging.send(msg);
 
@@ -20,7 +21,7 @@ const canRecord = typeof HTMLMediaElement !== "undefined" && "captureStream" in 
 const detector = createDomDetector({
   document,
   frameUrl,
-  emit: (sources) => send({ t: "dom/report", sources, frameUrl }),
+  emit: (sources) => send({ t: "dom/report", sources, frameUrl: frameUrl() }),
   blobVariants: (video, src, elementKey) => blobVariants(video, src, elementKey, mse.byUrl(src), canRecord),
 });
 mse.onChange(() => detector.refresh());

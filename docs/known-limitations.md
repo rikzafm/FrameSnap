@@ -10,7 +10,7 @@ From spec section 10, plus what real-browser testing added.
 - **Multi-period DASH** uses only the first period.
 - **Adapters break** when sites change their pages or APIs. The fixture tests make that visible, but a fix is still needed.
 - **Generic pages with signed URLs and no duration** cannot be matched on resume by themselves; the popup asks the user to pick the video again.
-- **YouTube** exists only in the personal build, and videos that only offer ciphered formats yield no sources.
+- **YouTube** videos that only offer ciphered formats yield no sources.
 - **DRM** (Widevine and similar) is detected and refused; circumventing it is a non-goal.
 - **The first page opened right after installing** may not be seen by the network observer (it starts with the service worker). Reload the page once.
 - **The keyboard shortcut** is not delivered to automated browsers, so that path is covered by unit tests and the manual checklists, not by the e2e suite.

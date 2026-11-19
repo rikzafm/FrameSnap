@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planDownload, CHUNKED_MIN_BYTES } from "../../src/core/plan";
+import { bestVariantFor, planDownload, CHUNKED_MIN_BYTES } from "../../src/core/plan";
 import { buildDownloadArgs, buildGifArgs, gifLoopFlag } from "../../src/core/ffmpeg-args";
 import type { DownloadOptions, Variant, VideoSource } from "../../src/core/model";
 import { FrameSnapError } from "../../src/core/errors";
@@ -117,6 +117,41 @@ describe("planDownload", () => {
 
   it("notes when codecs were assumed from the container", () => {
     expect(planDownload(src([{}]), opts()).warnings).toContain("assumed-codecs");
+  });
+});
+
+describe("best available, per output format", () => {
+  // YouTube-style: every height in several codecs, VP9 with the highest bitrate
+  const yt = src([
+    { id: "vp9-1080", videoCodec: "vp09.00.40.08", container: "webm", height: 1080, bitrate: 3_000_000 },
+    { id: "h264-1080", videoCodec: "avc1.640028", height: 1080, bitrate: 2_500_000 },
+    { id: "av1-1080", videoCodec: "av01.0.08M.08", height: 1080, bitrate: 2_000_000 },
+    { id: "vp9-2160", videoCodec: "vp09.00.50.08", container: "webm", height: 2160, bitrate: 15_000_000 },
+  ]);
+  const id = (format: DownloadOptions["format"]) => bestVariantFor(yt.variants, format)?.id;
+
+  it("takes the tallest variant that copies into the format, preferring H.264 for MP4", () => {
+    expect(id("mp4")).toBe("h264-1080");
+    expect(id("mov")).toBe("h264-1080");
+    expect(id("webm")).toBe("vp9-2160");
+    expect(id("mkv")).toBe("vp9-2160");
+  });
+
+  it("goes taller for a codec that still copies (AV1 into MP4) over a shorter H.264", () => {
+    const withAv1 = [...yt.variants, { ...yt.variants[2]!, id: "av1-2160", height: 2160 }];
+    expect(bestVariantFor(withAv1, "mp4")?.id).toBe("av1-2160");
+  });
+
+  it("falls back to the plain best when nothing fits, and for audio formats", () => {
+    const vp9Only = yt.variants.filter((v) => v.id.startsWith("vp9"));
+    expect(bestVariantFor(vp9Only, "mp4")?.id).toBe("vp9-2160");
+    expect(id("m4a")).toBe("vp9-2160");
+  });
+
+  it("plans MP4 'best' as a copy of the H.264 rendition", () => {
+    const p = planDownload(yt, opts({ audio: "remove" }));
+    expect(p.inputs[0]!.refId).toBe("h264-1080");
+    expect(p.video).toBe("copy");
   });
 });
 

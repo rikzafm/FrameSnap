@@ -68,6 +68,12 @@ export interface VideoSource {
   detectedBy: DetectedBy[];
   /** DOM facts used for ranking; absent for network-only finds. */
   dom?: DomFacts;
+  /**
+   * Adapter find that is the page's own main video (a YouTube watch page).
+   * It claims the page's largest capture-only element even when their
+   * lengths differ, as they do while an ad plays.
+   */
+  mainVideo?: true;
 }
 
 export interface DomFacts {

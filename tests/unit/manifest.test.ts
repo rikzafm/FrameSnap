@@ -2,8 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildManifest } from '../../src/manifest';
 
 describe('manifest', () => {
-  const store = buildManifest({ youtube: false });
-  const personal = buildManifest({ youtube: true });
+  const store = buildManifest();
 
   it('is Manifest V3', () => {
     expect(store.manifest_version).toBe(3);
@@ -42,9 +41,10 @@ describe('manifest', () => {
     expect(hosts).toContain('discord.com');
   });
 
-  it('keeps YouTube out of the store build and in the personal build', () => {
-    expect(store.host_permissions.join(' ')).not.toMatch(/youtube|googlevideo/);
-    expect(personal.host_permissions.join(' ')).toMatch(/youtube\.com/);
+  it('declares the YouTube and googlevideo hosts', () => {
+    const hosts = store.host_permissions.join(' ');
+    expect(hosts).toMatch(/youtube\.com/);
+    expect(hosts).toMatch(/googlevideo\.com/);
   });
 
   it('defines the three commands with Alt+Shift+S for snap-frame', () => {

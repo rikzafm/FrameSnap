@@ -103,9 +103,7 @@ describe("single video", () => {
 
   it("downloads with the chosen options", () => {
     make().handle({ t: "media/updated", tabId: 5, sources: [source("a", "Cat clip")] });
-    const fmt = q<HTMLSelectElement>("select[name=format]")!;
-    fmt.value = "webm";
-    fmt.dispatchEvent(new Event("change", { bubbles: true }));
+    q('[data-key="seg-webm"]')!.click();
     byText("button", "Download")!.click();
     expect(posted).toContainEqual({
       t: "job/download",
@@ -150,11 +148,11 @@ describe("list", () => {
   it("lists videos as radio cards and selects with the keyboard", async () => {
     make().handle({ t: "media/updated", tabId: 5, sources: [source("a", "First"), source("b", "Second")] });
     expect(root.textContent).toContain("2 videos found");
-    expect(root.querySelectorAll('[role="radio"]')).toHaveLength(2);
+    expect(root.querySelectorAll('.cards [role="radio"]')).toHaveLength(2);
     expect(await axeViolations()).toEqual([]);
-    const first = q('[role="radio"][aria-checked="true"]')!;
+    const first = q('.cards [role="radio"][aria-checked="true"]')!;
     key(first, "ArrowDown");
-    expect(q('[role="radio"][aria-checked="true"]')!.textContent).toContain("Second");
+    expect(q('.cards [role="radio"][aria-checked="true"]')!.textContent).toContain("Second");
     byText("button", "Download")!.click();
     expect(posted.at(-1)).toMatchObject({ t: "job/download", sourceId: "b" });
   });
@@ -167,7 +165,7 @@ describe("list", () => {
 
   it("honours the worker's selected id", () => {
     make().handle({ t: "media/updated", tabId: 5, sources: [source("a", "First"), source("b", "Second")], selectedId: "b" });
-    expect(q('[role="radio"][aria-checked="true"]')!.textContent).toContain("Second");
+    expect(q('.cards [role="radio"][aria-checked="true"]')!.textContent).toContain("Second");
   });
 });
 
@@ -274,9 +272,7 @@ describe("screenshot tab", () => {
     const saved: unknown[] = [];
     open({ snap: { options: { format: "png", quality: 0.92, copy: false, showButton: true }, onChange: (o) => saved.push(o) } });
     expect(q("input[name=snap-quality]")).toBeNull(); // PNG has no quality
-    const fmt = q<HTMLSelectElement>("select[name=snap-format]")!;
-    fmt.value = "jpeg";
-    fmt.dispatchEvent(new Event("change", { bubbles: true }));
+    q('[data-key="seg-jpeg"]')!.click();
     const quality = q<HTMLInputElement>("input[name=snap-quality]")!;
     quality.value = "60";
     quality.dispatchEvent(new Event("input", { bubbles: true }));

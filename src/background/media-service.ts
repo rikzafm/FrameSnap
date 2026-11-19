@@ -127,6 +127,18 @@ export function createMediaService(deps: MediaServiceDeps): MediaService {
       post(message(tabId, await registry.list(tabId), resumable));
       const scanned = await deps.scanDom(tabId).catch(() => undefined);
       if (scanned?.length) await registry.ingest(tabId, scanned);
+      // the page URL alone can name a video (a YouTube watch page): no sniffed hit or tap needed
+      const tab = await deps.getTab(tabId).catch(() => undefined);
+      if (tab?.url) {
+        const finds = pickAdapter(tab.url).detect({
+          pageUrl: tab.url,
+          pageTitle: tab.title ?? "",
+          domVideos: [],
+          network: [],
+          ...(tapped.has(tabId) ? { tapped: tapped.get(tabId)! } : {}),
+        });
+        if (finds.length) await registry.ingest(tabId, finds);
+      }
       await resolveAll(tabId, await registry.list(tabId));
       post(message(tabId, await registry.list(tabId), resumable));
     },

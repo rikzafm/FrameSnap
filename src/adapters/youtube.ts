@@ -1,5 +1,5 @@
 /**
- * YouTube adapter (personal build only, compiled in when `__YOUTUBE__`).
+ * YouTube adapter.
  * The main-world reader forwards `ytInitialPlayerResponse`; this adapter turns
  * `streamingData` into variants. Video-only adaptive formats are variants with
  * `hasAudio: false`, audio-only formats are `audioTracks`, muxed by the
@@ -153,9 +153,20 @@ function parseResponse(r: unknown, prefix: string, cipher?: CipherManifest): Par
   };
 }
 
+/** The video id the page URL itself shows: /watch?v=, /shorts/, /live/. */
+function pageVideoId(pageUrl: string): string | undefined {
+  try {
+    const u = new URL(pageUrl);
+    return u.searchParams.get('v') ?? /^\/(?:shorts|live)\/([\w-]{11})/.exec(u.pathname)?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
 function fromResponse(r: unknown, ctx: DetectContext): VideoSource | undefined {
   const p = parseResponse(r, '');
   if (!p) return undefined;
+  const main = pageVideoId(ctx.pageUrl) === p.videoId;
   return {
     id: `youtube:${p.videoId}`,
     site: 'youtube',
@@ -167,17 +178,44 @@ function fromResponse(r: unknown, ctx: DetectContext): VideoSource | undefined {
     audioTracks: p.audioTracks,
     protection: 'none',
     detectedBy: ['adapter'],
+    ...(main ? { mainVideo: true as const } : {}),
+  };
+}
+
+/** `(3) Title - YouTube` -> `Title`. */
+const cleanPageTitle = (t: string): string => t.replace(/^\(\d+\)\s*/, '').replace(/\s*-\s*YouTube$/, '').trim();
+
+/**
+ * The video the page URL names, before anything is known about it. `resolve`
+ * fills it from the player API, like YoutubeExplode working from a link, so
+ * a missed or wrong page payload (an ad's player response) cannot hide it.
+ */
+function fromPageUrl(videoId: string, ctx: DetectContext): VideoSource {
+  return {
+    id: `youtube:${videoId}`,
+    site: 'youtube',
+    title: cleanPageTitle(ctx.pageTitle) || videoId,
+    pageUrl: ctx.pageUrl,
+    thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+    variants: [],
+    audioTracks: [],
+    protection: 'none',
+    detectedBy: ['adapter'],
+    mainVideo: true,
   };
 }
 
 function detect(ctx: DetectContext): VideoSource[] {
+  const pageId = pageVideoId(ctx.pageUrl);
   const out = new Map<string, VideoSource>();
   // Later payloads (SPA navigations, refreshed player responses) win.
   for (const p of ctx.tapped ?? []) {
     if (!isObj(p) || p.kind !== YT_TAP_KIND) continue;
     const src = fromResponse(p.response, ctx);
-    if (src) out.set(src.id, src);
+    // on a watch page only its own video counts: the player may report an ad
+    if (src && (!pageId || src.id === `youtube:${pageId}`)) out.set(src.id, src);
   }
+  if (pageId && !out.has(`youtube:${pageId}`)) out.set(`youtube:${pageId}`, fromPageUrl(pageId, ctx));
   return [...out.values()];
 }
 
@@ -229,6 +267,7 @@ async function resolve(src: VideoSource, ctx: AdapterContext): Promise<VideoSour
     if (!p || p.videoId !== videoId || !p.variants.length) continue;
     return {
       ...src,
+      ...(p.title ? { title: p.title } : {}),
       ...(p.duration && !src.duration ? { duration: p.duration } : {}),
       variants: p.variants,
       audioTracks: p.audioTracks,

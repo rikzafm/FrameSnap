@@ -18,9 +18,4 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run test:engine
-      - name: Store build
-        run: npm run build
-      - name: Personal build
-        run: npm run build:personal
-      - name: Store build contains no YouTube code or permissions
-        run: npm run check:store
+      - run: npm run build

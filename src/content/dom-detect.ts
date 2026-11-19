@@ -11,7 +11,8 @@ import type { Container, DomFacts, Variant, VideoSource } from "../core/model";
 
 export interface DomDetectorOptions {
   document: Document;
-  frameUrl: string;
+  /** The frame's URL, or a getter for it: a single-page site (YouTube) changes it without a reload. */
+  frameUrl: string | (() => string);
   emit: (sources: VideoSource[]) => void;
   debounceMs?: number;
   /** Extra variants for a blob: video (MSE capture, recorder). */
@@ -65,7 +66,8 @@ function thumbnailOf(v: HTMLVideoElement): string | undefined {
 }
 
 export function createDomDetector(opts: DomDetectorOptions): DomDetector {
-  const { document: doc, frameUrl, emit, debounceMs = 100 } = opts;
+  const { document: doc, emit, debounceMs = 100 } = opts;
+  const urlOf = typeof opts.frameUrl === "function" ? opts.frameUrl : () => opts.frameUrl as string;
   const keys = new WeakMap<HTMLVideoElement, string>();
   const byKey = new Map<string, WeakRef<HTMLVideoElement>>();
   const wired = new WeakSet<HTMLVideoElement>();
@@ -121,6 +123,7 @@ export function createDomDetector(opts: DomDetectorOptions): DomDetector {
       });
     }
     if (src.startsWith("blob:")) variants.push(...(opts.blobVariants?.(v, src, elementKey) ?? []));
+    const frameUrl = urlOf();
     const source: VideoSource = {
       id: `dom:${fnv1a(src || frameUrl + elementKey)}`,
       site: "generic",

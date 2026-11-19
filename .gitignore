@@ -3,7 +3,6 @@
 .agents/
 node_modules/
 dist/
-dist-personal/
 coverage/
 tests/browser/__screenshots__/
 release/

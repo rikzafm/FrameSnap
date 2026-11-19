@@ -1,5 +1,5 @@
 /**
- * YouTube player API lookup (personal build only), the way YoutubeExplode
+ * YouTube player API lookup, the way YoutubeExplode
  * (and so YoutubeDownloader) does it.
  *
  * The page's own WEB player response is SABR-only: its formats carry no URL,

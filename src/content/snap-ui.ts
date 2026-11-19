@@ -99,7 +99,7 @@ button { position: fixed; z-index: 2147483647; width: 36px; height: 36px; border
   background: #c23a08; color: #faf8f3; font: 600 16px/1 system-ui, sans-serif; box-shadow: 0 1px 4px #0006;
   opacity: 0; transition: opacity 120ms ease-out; }
 /* Placed over the video's corner but invisible until the pointer is on the button itself. */
-button:hover, button:focus-visible { opacity: 1; }
+button:hover { opacity: 1; }
 button:focus-visible { outline: 2px solid #faf8f3; outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { button { transition: none; } }
 `;

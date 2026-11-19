@@ -135,9 +135,7 @@ describe("error codes in the popup", () => {
       ],
     });
     p.handle({ t: "media/updated", tabId: 5, sources: [s] });
-    const fmt = root.querySelector<HTMLSelectElement>("select[name=format]")!;
-    fmt.value = "mkv";
-    fmt.dispatchEvent(new Event("change", { bubbles: true }));
+    root.querySelector<HTMLElement>('[data-key="seg-mkv"]')!.click();
     expect(root.textContent).toContain(ERROR_COPY["too-large"].message);
     expect(byText("Download")!.disabled).toBe(true);
     byText("Choose lower quality")!.click();

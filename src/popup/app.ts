@@ -16,6 +16,7 @@ import type { Mode } from "./mode-memory";
 import { errorNotice, errorToast, type ErrorHandlers } from "../ui/error-notice";
 import { gifOptions, gifPanel, gifPreviewView, type GifChoices, type GifPreview } from "./gif-panel";
 import { describeDownload, jobRowModel, qualityChoices, resumeBanner, type JobView } from "./model";
+import { bestVariantFor } from "../core/plan";
 
 export interface PopupDeps {
   tab: { id: number; url: string };
@@ -49,7 +50,8 @@ interface JobMeta extends JobView {
   sampleRatio?: number;
 }
 
-const FORMATS: OutputFormat[] = ["mp4", "webm", "mkv", "mov", "mp3", "m4a"];
+const SEGMENT_FORMATS: OutputFormat[] = ["mp4", "webm", "mkv", "mov"];
+const FORMAT_LABELS: Record<string, string> = { webm: "WebM" };
 const MODE_TABS = [
   { value: "video", label: "Video" },
   { value: "gif", label: "GIF" },
@@ -237,30 +239,45 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     return h(
       "section",
       { class: "summary", "aria-label": "Selected video" },
-      src.thumbnail ? h("img", { class: "thumb", src: src.thumbnail, alt: "" }) : svgIcon(ICONS.play, "thumb thumb-empty"),
+      h(
+        "div",
+        { class: "thumb-wrap" },
+        src.thumbnail ? h("img", { class: "thumb", src: src.thumbnail, alt: "" }) : svgIcon(ICONS.play, "thumb thumb-empty"),
+        duration ? h("span", { class: "thumb-badge" }, duration) : undefined,
+      ),
       h(
         "div",
         { class: "card-text" },
         h("p", { class: "eyebrow" }, `Detected · ${src.site}`),
-        h("p", { class: "card-title" }, duration ? `${src.title}, ${duration}` : src.title),
+        h("p", { class: "card-title" }, src.title),
         meta ? h("p", { class: "card-meta" }, meta) : undefined,
       ),
     );
   }
 
-  /** "Best available" reads as the rendition it resolves to (e.g. 720p); the duplicate entry is folded into it. */
+  /** "Best available" reads as the rendition it resolves to for the chosen format (e.g. 1080p · H.264); that entry is folded into it. */
   function qualityOptions(src: VideoSource): { choices: { value: string; label: string }[]; value: string } {
     const all = qualityChoices(src);
-    const top = all[1];
+    const bestId = bestVariantFor(src.variants, s.format)?.id;
+    const top = all.find((c) => c.value === bestId) ?? all[1];
     const cur = quality(src);
     if (!top) return { choices: all, value: cur };
-    return { choices: [{ value: "best", label: top.label }, ...all.slice(2)], value: cur === top.value ? "best" : cur };
+    const rest = all.slice(1).filter((c) => c !== top);
+    return { choices: [{ value: "best", label: top.label }, ...rest], value: cur === top.value ? "best" : cur };
+  }
+
+  /** A label with a segmented control on the right (the same row shape as the GIF tab). */
+  function segRow(label: string, choices: { value: string; label: string }[], value: string, onPick: (v: string) => void): HTMLElement {
+    const id = nextId("seg-label");
+    return h("div", { class: "row" }, h("span", { class: "row-label", id }, label), segmented(id, choices, value, onPick));
   }
 
   function formatQualityRows(src: VideoSource): HTMLElement[] {
     const q = qualityOptions(src);
+    // four video containers as pills; a saved audio format (mp3 / m4a) joins them so it stays visible
+    const formats = SEGMENT_FORMATS.includes(s.format) ? SEGMENT_FORMATS : [...SEGMENT_FORMATS, s.format];
     return [
-      selectRow("opt-format", "Format", "format", FORMATS.map((f) => ({ value: f, label: f.toUpperCase() })), s.format, (v) => ((s.format = v as OutputFormat), render())),
+      segRow("Format", formats.map((f) => ({ value: f, label: FORMAT_LABELS[f] ?? f.toUpperCase() })), s.format, (v) => ((s.format = v as OutputFormat), render(`seg-${v}`))),
       selectRow("opt-quality", "Quality", "quality", q.choices, q.value, (v) => ((s.quality = v), render())),
     ];
   }
@@ -271,23 +288,26 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     const panel = h("div", { class: "rows" });
     panel.append(
       ...formatQualityRows(src),
-      selectRow(
-        "opt-audio",
-        "Audio",
-        "audio",
-        [{ value: "keep", label: "Keep audio" }, { value: "remove", label: "Remove audio" }, { value: "only", label: "Audio only" }],
-        s.audio,
-        (v) => ((s.audio = v as AudioMode), render()),
-      ),
+      segRow("Audio", [{ value: "keep", label: "Keep audio" }, { value: "remove", label: "Mute" }, { value: "only", label: "Audio only" }], s.audio, (v) => ((s.audio = v as AudioMode), render(`seg-${v}`))),
     );
     const full = src.duration ? `0:00 – ${fmtDuration(src.duration)}` : "Full length";
     const range = s.trimOn ? `${fmtDuration(s.trimStart)} – ${fmtDuration(s.trimEnd || src.duration)}` : full;
+    // selection bar: the kept part of the video, as a share of its length
+    const total = src.duration ?? 0;
+    const from = s.trimOn && total ? Math.min(100, (s.trimStart / total) * 100) : 0;
+    const to = s.trimOn && total ? Math.min(100, ((s.trimEnd || total) / total) * 100) : 100;
+    const bar = h("div", { class: "trim-bar", "aria-hidden": "true" }, h("span", { class: "trim-keep", style: `left:${from}%;right:${100 - Math.max(from, to)}%` }));
     panel.append(
       h(
         "div",
-        { class: "row" },
-        h("span", { class: "row-label" }, "Trim"),
-        h("button", { type: "button", class: "pill", "aria-label": "Trim", "aria-expanded": String(s.trimOn), "aria-controls": "trim-fields", "data-key": "trim", onClick: () => ((s.trimOn = !s.trimOn), render("trim")) }, range),
+        { class: "row row-stack trim-row" },
+        h(
+          "div",
+          { class: "trim-head" },
+          h("span", { class: "row-label" }, "Trim"),
+          h("button", { type: "button", class: "row-value trim-toggle", "aria-label": "Trim", "aria-expanded": String(s.trimOn), "aria-controls": "trim-fields", "data-key": "trim", onClick: () => ((s.trimOn = !s.trimOn), render("trim")) }, range, !s.trimOn && src.duration ? h("span", { class: "trim-hint" }, " · full video") : undefined),
+        ),
+        bar,
       ),
     );
     if (s.trimOn) {
@@ -358,7 +378,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
   function screenshotPanel(src: VideoSource): HTMLElement {
     const panel = h("div", { class: "rows" });
     panel.append(
-      selectRow("snap-format", "Format", "snap-format", [{ value: "png", label: "PNG" }, { value: "jpeg", label: "JPEG" }, { value: "webp", label: "WEBP" }], s.snap.format, (v) => (setSnap({ format: v as SnapFormat }), render())),
+      segRow("Format", [{ value: "png", label: "PNG" }, { value: "jpeg", label: "JPG" }, { value: "webp", label: "WebP" }], s.snap.format, (v) => (setSnap({ format: v as SnapFormat }), render(`seg-${v}`))),
     );
     if (s.snap.format !== "png") {
       const out = h("output", { class: "estimate", for: "snap-quality" }, `${Math.round(s.snap.quality * 100)} %`);
@@ -388,14 +408,21 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
       h(
         "div",
         { class: "row" },
-        h("span", { class: "row-label" }, "Frame"),
+        h("span", { class: "row-label" }, "Step frame"),
         h("span", { class: "actions" }, iconButton("◀", "Previous frame", () => step(-1), "snap-prev"), iconButton("▶", "Next frame", () => step(1), "snap-next")),
       ),
       h(
         "div",
-        { class: "row row-stack" },
-        h("label", { class: "row-label", for: "burst-every" }, `Burst: snap every N seconds (up to ${BURST_CAP} frames)`),
-        h("input", { id: "burst-every", name: "burst-every", type: "number", min: 0.5, step: "0.5", value: String(s.burstEvery), "data-key": "burst-every", onInput: (e) => (s.burstEvery = Number((e.target as HTMLInputElement).value) || 1) }),
+        { class: "row row-stack burst-card" },
+        h("p", { class: "burst-title" }, "Burst"),
+        h("p", { class: "burst-hint" }, `Snap a frame every N seconds, up to ${BURST_CAP} frames.`),
+        h(
+          "div",
+          { class: "burst-field" },
+          h("label", { class: "row-label", for: "burst-every" }, "Every"),
+          h("input", { id: "burst-every", name: "burst-every", type: "number", min: 0.5, step: "0.5", value: String(s.burstEvery), "data-key": "burst-every", onInput: (e) => (s.burstEvery = Number((e.target as HTMLInputElement).value) || 1) }),
+          h("span", { class: "row-label" }, "seconds"),
+        ),
       ),
     );
     const burstBtn = s.bursting
@@ -414,7 +441,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     return h("div", { class: "panel", id: PANEL_ID }, errorNotice("drm", {}), actions(src));
   }
 
-  const SITES = ["Reddit", "X", ...(typeof __YOUTUBE__ !== "undefined" && __YOUTUBE__ ? ["YouTube"] : []), "Discord"];
+  const SITES = ["Reddit", "X", "YouTube", "Discord"];
   const footer = () => h("p", { class: "footer-note" }, `${SITES.join(" · ")} and more`);
 
   function modeTabs(): HTMLElement {
@@ -569,7 +596,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     const frag = document.createDocumentFragment();
     const cur = selected();
     const single = s.loaded && cur !== undefined && (s.sources.length === 1 || s.focused);
-    frag.append(brand(single ? `v${deps.version ?? "1.0"} · Extension` : hostLabel()));
+    frag.append(brand(single ? `v${deps.version ?? "1.0"}` : hostLabel()));
     const banner = bannerView();
     if (banner) frag.append(banner);
     if (!s.loaded) frag.append(h("p", { class: "shell", role: "status" }, "Looking for videos…"));

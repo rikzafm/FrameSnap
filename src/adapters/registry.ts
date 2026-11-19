@@ -10,8 +10,7 @@ export const ADAPTERS: readonly SiteAdapter[] = [
   discordAdapter,
   redditAdapter,
   xAdapter,
-  // Personal build only: `__YOUTUBE__` is false in the store build, so this folds away.
-  ...(__YOUTUBE__ ? [youtubeAdapter] : []),
+  youtubeAdapter,
   genericAdapter,
 ];
 

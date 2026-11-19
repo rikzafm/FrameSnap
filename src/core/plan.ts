@@ -98,8 +98,32 @@ function audioInput(t: AudioTrack): PlanInput {
   };
 }
 
-function pickVariant(source: VideoSource, quality: string): Variant {
-  const v = (quality !== "best" && source.variants.find((x) => x.id === quality)) || bestVariant(source.variants);
+/** Video codecs in the order "best" prefers them for each output, among those that copy without re-encoding. */
+const PREFERRED_VIDEO: Partial<Record<OutputFormat, VideoFamily[]>> = {
+  mp4: ["h264", "hevc", "av1"],
+  mov: ["h264", "hevc"],
+  webm: ["vp9", "av1", "vp8"],
+  mkv: ["h264", "vp9", "hevc", "av1", "vp8"],
+};
+
+/**
+ * What "Best available" means for an output format: the tallest variant whose
+ * video goes into it as is (YouTube's 1080p VP9 into MP4 would be re-encoded
+ * in the browser, slowly, while its 1080p H.264 is copied). Ties go to the
+ * format's preferred codec, then bitrate. With nothing that fits, or for an
+ * audio format, it is simply the best variant.
+ */
+export function bestVariantFor(variants: readonly Variant[], format: OutputFormat): Variant | undefined {
+  const order = PREFERRED_VIDEO[format];
+  if (!order) return bestVariant(variants);
+  const rank = (v: Variant) => order.indexOf(families(v).video);
+  const fitting = variants.filter((v) => rank(v) >= 0 && videoFits(families(v).video, format));
+  if (!fitting.length) return bestVariant(variants);
+  return [...fitting].sort((a, b) => (b.height ?? 0) - (a.height ?? 0) || rank(a) - rank(b) || (b.bitrate ?? 0) - (a.bitrate ?? 0))[0];
+}
+
+function pickVariant(source: VideoSource, quality: string, format: OutputFormat): Variant {
+  const v = (quality !== "best" && source.variants.find((x) => x.id === quality)) || bestVariantFor(source.variants, format);
   if (!v) throw new FrameSnapError("unsupported", "no playable variant");
   return v;
 }
@@ -150,7 +174,7 @@ export function planDownload(source: VideoSource, opts: DownloadOptions): Downlo
       audioOp = opFor(audioFits(f.audio, format), frameAccurate);
     }
   } else {
-    chosen = pickVariant(source, opts.quality);
+    chosen = pickVariant(source, opts.quality, format);
     const f = families(chosen);
     if (f.assumed) warnings.push("assumed-codecs");
     videoOp = opFor(videoFits(f.video, format), frameAccurate);
