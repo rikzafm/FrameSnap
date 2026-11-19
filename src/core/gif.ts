@@ -29,16 +29,42 @@ export function clampTrim(trim: TrimRange, duration: number | undefined): TrimRa
 
 /** Move one handle by `steps` keyboard steps. Past the 30 s limit the other handle follows. */
 export function moveHandle(trim: TrimRange, which: "start" | "end", steps: number, duration: number | undefined): TrimRange {
+  return setHandle(trim, which, trim[which] + steps * GIF_TRIM_STEP, duration);
+}
+
+/** Pointer drags and Shift+arrow move handles in this step. */
+export const GIF_DRAG_STEP = 0.1;
+// toFixed drops float noise such as 0.30000000000000004
+const snapDrag = (t: number) => Number((Math.round(t / GIF_DRAG_STEP) * GIF_DRAG_STEP).toFixed(3));
+
+/**
+ * Put one handle at `value`: it cannot cross the other handle, and a range
+ * longer than GIF_MAX_SECONDS drags the other handle along.
+ */
+export function setHandle(trim: TrimRange, which: "start" | "end", value: number, duration: number | undefined): TrimRange {
   const total = duration ?? Infinity;
-  const delta = steps * GIF_TRIM_STEP;
   if (which === "start") {
-    const start = Math.min(Math.max(0, trim.start + delta), trim.end - GIF_MIN_SECONDS);
+    const start = Math.min(Math.max(0, value), trim.end - GIF_MIN_SECONDS);
     const end = trim.end - start > GIF_MAX_SECONDS ? Math.min(start + GIF_MAX_SECONDS, total) : trim.end;
     return { start, end };
   }
-  const end = Math.min(Math.max(trim.end + delta, trim.start + GIF_MIN_SECONDS), total);
+  const end = Math.min(Math.max(value, trim.start + GIF_MIN_SECONDS), total);
   const start = end - trim.start > GIF_MAX_SECONDS ? end - GIF_MAX_SECONDS : trim.start;
   return { start, end };
+}
+
+/** A handle dragged to time `t`, snapped to GIF_DRAG_STEP. */
+export const dragHandle = (trim: TrimRange, which: "start" | "end", t: number, duration: number | undefined): TrimRange => setHandle(trim, which, snapDrag(t), duration);
+
+/** The handle a press at time `t` grabs: the nearer one (the end on a tie, so a collapsed range can still grow). */
+export const nearestHandle = (trim: TrimRange, t: number): "start" | "end" => (Math.abs(t - trim.start) < Math.abs(t - trim.end) ? "start" : "end");
+
+/** Slide the whole range by `delta` seconds, keeping its length and staying inside the clip. */
+export function shiftRange(trim: TrimRange, delta: number, duration: number | undefined): TrimRange {
+  const len = trim.end - trim.start;
+  const total = duration ?? Infinity;
+  const start = Math.min(Math.max(0, snapDrag(trim.start + delta)), Math.max(0, total - len));
+  return { start, end: start + len };
 }
 
 /** The rendition worth fetching for a GIF: the smallest one that is at least as wide as the output. */

@@ -19,6 +19,8 @@ export type PopupToWorker =
   | { t: "picker/start"; tabId: number; resumeJobId?: string }
   | { t: "snap/frame"; tabId: number; sourceId?: string; options?: SnapOptions }
   | { t: "snap/step"; tabId: number; dir: 1 | -1; sourceId?: string }
+  /** Show `time` (seconds) in the page video: the GIF trim preview. */
+  | { t: "snap/seek"; tabId: number; time: number; sourceId?: string }
   | { t: "snap/burst"; tabId: number; sourceId?: string; intervalSec: number; options?: SnapOptions }
   | { t: "snap/burst-stop"; tabId: number }
   | { t: "demo/ping"; tabId: number; nonce: string };
@@ -49,6 +51,7 @@ export type WorkerToContent =
   /** Snap the frame on screen; `elementKey` picks the video, else the best one in the frame. */
   | { t: "snap/capture"; elementKey?: string; options: SnapOptions }
   | { t: "snap/step"; dir: 1 | -1; elementKey?: string }
+  | { t: "snap/seek"; time: number; elementKey?: string }
   | { t: "snap/burst"; elementKey?: string; intervalSec: number; options: SnapOptions }
   | { t: "snap/burst-stop" }
   /** Outcome to show as a toast. */
@@ -129,6 +132,8 @@ export function isPopupToWorker(x: unknown): x is PopupToWorker {
       return num(x.tabId) && (x.sourceId === undefined || str(x.sourceId)) && (x.options === undefined || isSnapOptions(x.options));
     case "snap/step":
       return num(x.tabId) && isDir(x.dir) && (x.sourceId === undefined || str(x.sourceId));
+    case "snap/seek":
+      return num(x.tabId) && num(x.time) && x.time >= 0 && (x.sourceId === undefined || str(x.sourceId));
     case "snap/burst":
       return num(x.tabId) && num(x.intervalSec) && (x.sourceId === undefined || str(x.sourceId)) && (x.options === undefined || isSnapOptions(x.options));
     case "snap/burst-stop":
@@ -187,6 +192,8 @@ export function isWorkerToContent(x: unknown): x is WorkerToContent {
       return isSnapOptions(x.options) && (x.elementKey === undefined || typeof x.elementKey === "string");
     case "snap/step":
       return isDir(x.dir) && (x.elementKey === undefined || typeof x.elementKey === "string");
+    case "snap/seek":
+      return num(x.time) && x.time >= 0 && (x.elementKey === undefined || typeof x.elementKey === "string");
     case "snap/burst":
       return num(x.intervalSec) && isSnapOptions(x.options) && (x.elementKey === undefined || typeof x.elementKey === "string");
     case "snap/result":

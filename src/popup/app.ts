@@ -97,6 +97,8 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     bursting: false,
   };
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
+  /** A GIF trim drag is in progress: a re-render would destroy the strip under the pointer, so renders wait for the drag to commit. */
+  let dragging = false;
   const selected = () => s.sources.find((x) => x.id === s.selectedId) ?? s.sources[0];
 
   function showToast(text: string, error?: ErrorCode) {
@@ -166,6 +168,9 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
       choices: gifChoices(src),
       busy,
       onMake: () => makeGif(src),
+      // only a source with a page element can be seeked; others would hit whichever video ranks best
+      ...(src.frameRef?.elementKey ? { onSeek: (time: number) => deps.post({ t: "snap/seek", tabId: deps.tab.id, sourceId: src.id, time }) } : {}),
+      onDrag: (active) => (dragging = active),
       onChange: (patch, focusKey) => {
         const { trim, ...rest } = patch;
         Object.assign(s.gif, rest);
@@ -555,6 +560,8 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
   /* ---------- render ---------- */
 
   function render(focusKey?: string) {
+    // the drag's commit renders everything once it ends
+    if (dragging) return;
     const active = document.activeElement as HTMLElement | null;
     const key = focusKey ?? (root.contains(active) ? active?.dataset.key : undefined);
     const caret = active instanceof HTMLInputElement && root.contains(active) ? active.selectionStart : null;

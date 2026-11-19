@@ -68,6 +68,9 @@ export function handlePopupSnap(snap: SnapService, msg: PopupToWorker): boolean 
     case 'snap/step':
       void snap.step(msg.tabId, msg.dir, msg.sourceId);
       return true;
+    case 'snap/seek':
+      void snap.seek(msg.tabId, msg.time, msg.sourceId);
+      return true;
     case 'snap/burst':
       void snap.burst(msg.tabId, {
         intervalSec: msg.intervalSec,

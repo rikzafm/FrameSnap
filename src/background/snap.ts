@@ -41,6 +41,8 @@ export interface SnapRequest {
 export interface SnapService {
   frame(tabId: number, req: SnapRequest): Promise<void>;
   step(tabId: number, dir: 1 | -1, sourceId?: string): Promise<void>;
+  /** Pause the named video and show `time`. Does nothing when the source has no page element. */
+  seek(tabId: number, time: number, sourceId?: string): Promise<void>;
   burst(
     tabId: number,
     req: { sourceId?: string; intervalSec: number; options?: SnapOptions },
@@ -121,6 +123,12 @@ export function createSnapService(deps: SnapServiceDeps): SnapService {
         { t: 'snap/step', dir, ...(t.elementKey ? { elementKey: t.elementKey } : {}) },
         t.frameId,
       );
+    },
+    async seek(tabId, time, sourceId) {
+      const t = await targetOf(tabId, { ...(sourceId ? { sourceId } : {}) });
+      // never broadcast a seek: it would move every video in the tab
+      if (!t.elementKey) return;
+      await send(tabId, { t: 'snap/seek', time, elementKey: t.elementKey }, t.frameId);
     },
     async burst(tabId, req) {
       const options = req.options ?? (await deps.getPrefs()).options;

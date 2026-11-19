@@ -233,6 +233,8 @@ describe('message guards', () => {
   it('accept well-formed snap messages and reject malformed ones', () => {
     expect(isPopupToWorker({ t: 'snap/step', tabId: 1, dir: 1 })).toBe(true);
     expect(isPopupToWorker({ t: 'snap/step', tabId: 1, dir: 2 })).toBe(false);
+    expect(isPopupToWorker({ t: 'snap/seek', tabId: 1, time: 3.2, sourceId: 'a' })).toBe(true);
+    expect(isPopupToWorker({ t: 'snap/seek', tabId: 1, time: -1 })).toBe(false);
     expect(
       isPopupToWorker({ t: 'snap/burst', tabId: 1, intervalSec: 5, options: DEFAULT_SNAP_OPTIONS }),
     ).toBe(true);

@@ -28,6 +28,8 @@ export interface SnapperOptions {
 export interface Snapper {
   capture(req: { elementKey?: string; options: SnapOptions }): Promise<boolean>;
   step(dir: 1 | -1, elementKey?: string): void;
+  /** Pause and show `time` (clamped to the clip). */
+  seek(time: number, elementKey?: string): void;
   burst(req: { elementKey?: string; intervalSec: number; options: SnapOptions }): void;
   stopBurst(): void;
   readonly bursting: boolean;
@@ -151,6 +153,13 @@ export function createSnapper(o: SnapperOptions): Snapper {
         ? t.video.duration
         : t.video.currentTime + 1;
       t.video.currentTime = stepTime(t.video.currentTime, dir, duration);
+    },
+    seek(time, elementKey) {
+      const t = target(elementKey);
+      if (!t) return;
+      t.video.pause();
+      const max = Number.isFinite(t.video.duration) ? t.video.duration : time;
+      t.video.currentTime = Math.min(Math.max(0, time), max);
     },
     burst({ elementKey, intervalSec, options }) {
       stopBurst();

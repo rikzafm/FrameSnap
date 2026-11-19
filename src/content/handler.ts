@@ -25,6 +25,9 @@ export function handleWorkerMessage(raw: unknown, detector: DomDetector, frameUr
     case "snap/step":
       snapper?.step(raw.dir, raw.elementKey);
       return undefined;
+    case "snap/seek":
+      snapper?.seek(raw.time, raw.elementKey);
+      return undefined;
     case "snap/burst":
       snapper?.burst({ ...(raw.elementKey ? { elementKey: raw.elementKey } : {}), intervalSec: raw.intervalSec, options: raw.options });
       return undefined;

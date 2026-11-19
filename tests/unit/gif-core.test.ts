@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampTrim, defaultGifTrim, describeGif, gifSourceSize, GIF_MIN_SECONDS, GIF_TRIM_STEP, moveHandle, pickGifVariant } from "../../src/core/gif";
+import { clampTrim, defaultGifTrim, describeGif, dragHandle, gifSourceSize, GIF_MIN_SECONDS, GIF_TRIM_STEP, moveHandle, nearestHandle, pickGifVariant, setHandle, shiftRange } from "../../src/core/gif";
 import type { GifOptions, Variant, VideoSource } from "../../src/core/model";
 
 const v = (id: string, width?: number, over: Partial<Variant> = {}): Variant => ({
@@ -56,6 +56,31 @@ describe("trim limits", () => {
     const t = moveHandle({ start: 4.9, end: 5 }, "start", 1, 60);
     expect(t.end - t.start).toBeGreaterThanOrEqual(GIF_MIN_SECONDS - 1e-9);
     expect(t.start).toBeLessThan(5);
+  });
+});
+
+describe("pointer drags", () => {
+  it("snaps a dragged handle to 0.1 s without float noise", () => {
+    expect(dragHandle({ start: 1, end: 5 }, "start", 2.3456, 60)).toEqual({ start: 2.3, end: 5 });
+    expect(dragHandle({ start: 0, end: 1 }, "end", 0.30000000000000004, 60).end).toBe(0.3);
+  });
+  it("cannot drag a handle past the other one or out of the clip", () => {
+    expect(dragHandle({ start: 1, end: 5 }, "start", 9, 60).start).toBeCloseTo(5 - GIF_MIN_SECONDS);
+    // stops at the clip end and pulls the start along to stay within 30 s
+    expect(dragHandle({ start: 1, end: 5 }, "end", 99, 60)).toEqual({ start: 30, end: 60 });
+  });
+  it("grabs the nearer handle, the end on a tie", () => {
+    expect(nearestHandle({ start: 2, end: 6 }, 3)).toBe("start");
+    expect(nearestHandle({ start: 2, end: 6 }, 5)).toBe("end");
+    expect(nearestHandle({ start: 4, end: 4 }, 4)).toBe("end");
+  });
+  it("slides the range keeping its length, inside the clip", () => {
+    expect(shiftRange({ start: 2, end: 4 }, 1.04, 60)).toEqual({ start: 3, end: 5 });
+    expect(shiftRange({ start: 2, end: 4 }, -10, 60)).toEqual({ start: 0, end: 2 });
+    expect(shiftRange({ start: 50, end: 55 }, 10, 60)).toEqual({ start: 55, end: 60 });
+  });
+  it("sets a handle to an exact time for Shift+arrow nudges", () => {
+    expect(setHandle({ start: 1, end: 5 }, "end", 5.1, 60)).toEqual({ start: 1, end: 5.1 });
   });
 });
 

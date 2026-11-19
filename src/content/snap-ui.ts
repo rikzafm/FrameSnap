@@ -96,8 +96,12 @@ export interface SnapButton {
 const BTN_CSS = `
 :host { all: initial; }
 button { position: fixed; z-index: 2147483647; width: 36px; height: 36px; border-radius: 8px; border: 0; cursor: pointer;
-  background: #c23a08; color: #faf8f3; font: 600 16px/1 system-ui, sans-serif; box-shadow: 0 1px 4px #0006; }
+  background: #c23a08; color: #faf8f3; font: 600 16px/1 system-ui, sans-serif; box-shadow: 0 1px 4px #0006;
+  opacity: 0; transition: opacity 120ms ease-out; }
+/* Placed over the video's corner but invisible until the pointer is on the button itself. */
+button:hover, button:focus-visible { opacity: 1; }
 button:focus-visible { outline: 2px solid #faf8f3; outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { button { transition: none; } }
 `;
 const HIDE_DELAY_MS = 1500;
 
@@ -105,6 +109,14 @@ export function createSnapButton(o: SnapButtonOptions): SnapButton {
   const { document: doc, detector, shadowMode = 'closed' } = o;
   let enabled = o.enabled;
   let host: HTMLElement | undefined;
+  let shownFor: HTMLVideoElement | undefined;
+  let btn: HTMLButtonElement | undefined;
+
+  const place = (b: HTMLButtonElement, video: HTMLVideoElement) => {
+    const r = video.getBoundingClientRect();
+    b.style.left = `${Math.max(0, r.right - 44)}px`;
+    b.style.top = `${Math.max(0, r.top + 8)}px`;
+  };
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
 
   const keyOf = (video: HTMLVideoElement) =>
@@ -116,11 +128,20 @@ export function createSnapButton(o: SnapButtonOptions): SnapButton {
     hideTimer = undefined;
     host?.remove();
     host = undefined;
+    shownFor = undefined;
+    btn = undefined;
   }
 
   function show(video: HTMLVideoElement, key: string) {
+    // Already placed on this video: keep it, so a hovered button is not rebuilt under the pointer.
+    if (host && btn && shownFor === video) {
+      if (hideTimer) clearTimeout(hideTimer);
+      hideTimer = undefined;
+      place(btn, video);
+      return;
+    }
     hide();
-    const r = video.getBoundingClientRect();
+    shownFor = video;
     host = doc.createElement('div');
     host.setAttribute('data-framesnap-snapbtn', '');
     const root = host.attachShadow({ mode: shadowMode });
@@ -131,8 +152,8 @@ export function createSnapButton(o: SnapButtonOptions): SnapButton {
     b.textContent = '▣';
     b.setAttribute('aria-label', 'Snap this frame');
     b.title = 'Snap this frame';
-    b.style.left = `${Math.max(0, r.right - 44)}px`;
-    b.style.top = `${Math.max(0, r.top + 8)}px`;
+    place(b, video);
+    btn = b;
     b.addEventListener('click', (e) => {
       e.stopPropagation();
       o.onSnap(key);

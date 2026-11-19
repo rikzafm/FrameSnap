@@ -500,9 +500,14 @@ select,
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   color: var(--ink-soft);
   font-size: 12px;
+}
+.trim-field input {
+  width: 100%;
+  min-width: 0;
 }
 .progress {
   height: 6px;
