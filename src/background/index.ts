@@ -17,6 +17,7 @@ import { createDownloadOrchestrator } from "./download";
 import { createEngineLifecycle } from "./engine-lifecycle";
 import { createEngineLink } from "./engine-link";
 import { fetchText } from "./fetch-text";
+import { createPostJson } from "./post-json";
 import { createHistoryStore } from "./history";
 import { createJobCommands } from "./popup-commands";
 import { createJobStore, jobKey } from "./job-store";
@@ -53,6 +54,7 @@ const media = createMediaService({
   },
   adapterContext: {
     fetchText: (url, headers) => fetchText(fetch, url, headers),
+    ...(__YOUTUBE__ ? { postJson: createPostJson({ fetch: (url, init) => fetch(url, init), dnr }) } : {}),
     parseMaster,
     parseMedia,
     parseMpd,

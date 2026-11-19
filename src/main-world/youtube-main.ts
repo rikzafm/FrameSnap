@@ -9,9 +9,10 @@ let lastVideoId: string | undefined;
 function post(): void {
   if (nonce === undefined) return;
   const response = readPlayerResponse(window, document) as
-    { videoDetails?: { videoId?: string }; streamingData?: unknown } | undefined;
+    { videoDetails?: { videoId?: string } } | undefined;
   const id = response?.videoDetails?.videoId;
-  if (!response || !response.streamingData || !id || id === lastVideoId) return;
+  // no streamingData check: a SABR-only response still names the video the worker looks up
+  if (!response || !id || id === lastVideoId) return;
   lastVideoId = id;
   window.postMessage(
     { channel: TAP_CHANNEL, nonce, payload: { kind: YT_TAP_KIND, response } },

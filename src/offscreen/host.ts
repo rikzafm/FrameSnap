@@ -88,7 +88,9 @@ export function createEngineHost(deps: EngineHostDeps): EngineHost {
     }
   };
 
-  const fail = (jobId: string, err: unknown) => {
+  const fail = (jobId: string, err: unknown, ac: AbortController) => {
+    // a newer run of this job id took over (resume): the old run's abort is not the job's failure
+    if (controllers.get(jobId) !== ac) return;
     const error: AppError =
       err instanceof Error && err.name === 'AbortError' ? appError('cancelled') : toAppError(err);
     send({ t: 'engine/error', jobId, error, resumable: error.retryable && !inMemory.has(jobId) });
@@ -150,7 +152,7 @@ export function createEngineHost(deps: EngineHostDeps): EngineHost {
       }
       send({ t: 'engine/fetched', jobId: msg.jobId, resumable: !inMemory.has(msg.jobId) });
     } catch (err) {
-      fail(msg.jobId, ac.signal.aborted ? new DOMException('cancelled', 'AbortError') : err);
+      fail(msg.jobId, ac.signal.aborted ? new DOMException('cancelled', 'AbortError') : err, ac);
     } finally {
       end(msg.jobId, ac);
     }
@@ -173,7 +175,7 @@ export function createEngineHost(deps: EngineHostDeps): EngineHost {
         mime: blob.type,
       });
     } catch (err) {
-      fail(jobId, err);
+      fail(jobId, err, ac);
     } finally {
       end(jobId, ac);
     }

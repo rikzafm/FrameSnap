@@ -45,6 +45,8 @@ export interface PlanInput {
   /** Variant or audio-track id this input came from. */
   refId: string;
   acceptsRanges: boolean;
+  /** Ranged chunks beat one long request (see Variant.throttled). */
+  throttled?: boolean;
   sizeBytes?: number;
   live: boolean;
 }
@@ -77,6 +79,7 @@ function toInput(role: PlanInput["role"], v: Variant): PlanInput {
     container: v.container,
     refId: v.id,
     acceptsRanges: v.acceptsRanges === true,
+    ...(v.throttled ? { throttled: true } : {}),
     sizeBytes: v.sizeBytes,
     live: v.live === true,
   };
@@ -186,7 +189,7 @@ export function planDownload(source: VideoSource, opts: DownloadOptions): Downlo
   if (kinds.has("mse-capture") || kinds.has("recorder")) route = "capture";
   else if (kinds.has("hls") || kinds.has("dash")) route = "segments";
   else if (needsEngine) route = "chunked";
-  else route = first.acceptsRanges && (first.sizeBytes ?? 0) >= CHUNKED_MIN_BYTES ? "chunked" : "direct";
+  else route = first.acceptsRanges && ((first.sizeBytes ?? 0) >= CHUNKED_MIN_BYTES || first.throttled === true) ? "chunked" : "direct";
 
   if (kinds.has("recorder")) warnings.push("capture-recorder");
   else if (kinds.has("mse-capture")) warnings.push("capture-mse");

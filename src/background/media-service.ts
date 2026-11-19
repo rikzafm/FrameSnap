@@ -38,20 +38,29 @@ export interface MediaService {
 
 const MAX_TAPPED = 50;
 
-const unresolved = (s: VideoSource) => s.variants.some((v) => (v.kind === "hls" || v.kind === "dash") && v.live === undefined);
+const hasManifest = (s: VideoSource) => s.variants.some((v) => (v.kind === "hls" || v.kind === "dash") && v.live === undefined);
+
+function unresolved(s: VideoSource): boolean {
+  const adapter = pickAdapter(s.pageUrl);
+  return adapter.needsResolve ? adapter.needsResolve(s) : hasManifest(s);
+}
 
 export function createMediaService(deps: MediaServiceDeps): MediaService {
   const { registry, sniffer } = deps;
   /** Tapped payloads per tab, newest last. A tweet page can fire many GraphQL calls. */
   const tapped = new Map<number, unknown[]>();
 
-  const message = (tabId: number, sources: VideoSource[], resumable?: JobRecord[]): WorkerToPopup => ({
-    t: "media/updated",
-    tabId,
-    sources,
-    ...(sources[0] ? { selectedId: sources[0].id } : {}),
-    ...(resumable ? { resumable } : {}),
-  });
+  const message = (tabId: number, all: VideoSource[], resumable?: JobRecord[]): WorkerToPopup => {
+    // a source still waiting on `resolve` (a SABR-only YouTube page) has nothing to offer yet
+    const sources = all.filter((s) => s.variants.length > 0);
+    return {
+      t: "media/updated",
+      tabId,
+      sources,
+      ...(sources[0] ? { selectedId: sources[0].id } : {}),
+      ...(resumable ? { resumable } : {}),
+    };
+  };
 
   /** Failed jobs the popup can offer to resume on this tab's page. */
   async function resumableFor(tabId: number): Promise<JobRecord[] | undefined> {

@@ -16,8 +16,40 @@ export function score(src: VideoSource): number {
   return area * (src.dom.playing ? 2 : 1) + heightTerm;
 }
 
+const isCapture = (v: Variant) => v.kind === "mse-capture" || v.kind === "recorder";
+
+/**
+ * A site adapter's find and the page's own `<video>` are often the same video:
+ * the adapter has real URLs but no DOM facts, the element only offers MSE
+ * capture or recording. When exactly one adapter find on the page matches the
+ * element's length, it takes the element's DOM facts and the element's
+ * capture-only entry is dropped, so the downloadable one is listed and ranked
+ * as the visible video.
+ */
+export function foldCaptureDuplicates(sources: readonly VideoSource[]): VideoSource[] {
+  const out = [...sources];
+  for (const cap of sources) {
+    if (!cap.dom || cap.variants.length === 0 || !cap.variants.every(isCapture) || !cap.duration) continue;
+    const matches = out.filter(
+      (s) =>
+        s !== cap &&
+        s.detectedBy.includes("adapter") &&
+        s.pageUrl === cap.pageUrl &&
+        s.variants.length > 0 &&
+        !s.variants.some(isCapture) &&
+        s.duration !== undefined &&
+        Math.abs(s.duration - cap.duration!) <= 1.5,
+    );
+    if (matches.length !== 1) continue;
+    const target = matches[0]!;
+    out[out.indexOf(target)] = { ...target, dom: target.dom ?? cap.dom, frameRef: target.frameRef ?? cap.frameRef };
+    out.splice(out.indexOf(cap), 1);
+  }
+  return out;
+}
+
 export function rankSources(sources: readonly VideoSource[]): VideoSource[] {
-  return [...sources].sort((a, b) => score(b) - score(a) || a.id.localeCompare(b.id));
+  return foldCaptureDuplicates(sources).sort((a, b) => score(b) - score(a) || a.id.localeCompare(b.id));
 }
 
 /** Variant the "Best available" quality resolves to. */

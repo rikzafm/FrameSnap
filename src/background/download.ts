@@ -54,6 +54,8 @@ export interface DownloadItem {
   id: number;
   filename?: string;
   canResume?: boolean;
+  state?: string;
+  error?: string;
 }
 
 export interface DownloadsApi {
@@ -445,6 +447,8 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     const id = await downloads.download({ url, filename: a.filename, conflictAction: "uniquify" });
     a.downloadId = id;
     byDownload.set(id, a.id);
+    // kept on the record: a restarted service worker finds the browser download again through it
+    await update(a.id, (j) => ({ ...j, downloadId: id }));
     if (a.cancelling) await finalizeCancel(a);
   }
 
@@ -827,7 +831,20 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     return deps.tabUrl(tabId).then(sameCanonical(want), () => false);
   }
 
+  /** Jobs whose resume is waiting for the page to be re-detected, so a second click does not start another run. */
+  const resuming = new Set<string>();
+
   async function resumeJob(jobId: string, tabId: number): Promise<void> {
+    if (resuming.has(jobId)) return;
+    resuming.add(jobId);
+    try {
+      await resumeJobOnce(jobId, tabId);
+    } finally {
+      resuming.delete(jobId);
+    }
+  }
+
+  async function resumeJobOnce(jobId: string, tabId: number): Promise<void> {
     const job = await resumable(jobId);
     if (!job) return;
     let tab = tabId;
@@ -898,7 +915,7 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
   }
 
   /** Take over a job the offscreen document kept running while the service worker was gone. */
-  function adopt(job: JobRecord, phase: "fetch" | "engine"): void {
+  function adopt(job: JobRecord, phase: "fetch" | "engine" | "save"): void {
     const ref = job.source;
     const source: VideoSource = {
       id: ref.sourceId,
@@ -917,7 +934,7 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
       plan: job.plan,
       filename: job.filename,
       ac: new AbortController(),
-      busy: phase,
+      ...(phase === "save" ? {} : { busy: phase }),
       holdsEngine: phase === "engine",
       usesEngine: true,
       cancelling: false,
@@ -944,9 +961,29 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
       adopt(job, phase);
       if (job.ruleId !== undefined) keepRules.add(job.ruleId);
     }
+    // Saves in progress: the browser keeps downloading without us, so pick the download up again
+    const saving: { job: JobRecord; downloadId: number }[] = [];
+    for (const job of live) {
+      if (active.has(job.id) || job.kind !== "download" || job.status !== "running" || job.phase !== "save" || job.downloadId === undefined) continue;
+      if (!(await downloads.search({ id: job.downloadId }).catch(() => []))[0]) continue; // the download is gone: falls through to a resumable failure
+      adopt(job, "save");
+      const a = active.get(job.id)!;
+      a.downloadId = job.downloadId;
+      byDownload.set(job.downloadId, job.id);
+      saving.push({ job, downloadId: job.downloadId });
+      if (job.ruleId !== undefined) keepRules.add(job.ruleId);
+    }
     await clearStaleRules(keepRules);
+    for (const { job, downloadId } of saving) {
+      const a = active.get(job.id)!;
+      const item = (await downloads.search({ id: downloadId }).catch(() => []))[0];
+      if (item?.state === "complete") await complete(a, downloadId).catch(() => undefined);
+      else if (item?.state === "interrupted") await interrupted(a, downloadId, item.error).catch(() => undefined);
+      // otherwise still in progress: onDownloadChanged finishes it
+    }
+    const handled = new Set(saving.map((x) => x.job.id));
     for (const j of recoverInterrupted(
-      live.filter((j) => !active.has(j.id)),
+      live.filter((j) => !active.has(j.id) && !handled.has(j.id)),
       now(),
     )) {
       if (all.find((o) => o.id === j.id)?.status !== j.status) await jobs.put(j);

@@ -46,6 +46,12 @@ export interface DetectContext {
 
 export interface AdapterContext {
   fetchText(url: string, headers?: Record<string, string>): Promise<string>;
+  /**
+   * POST a JSON body without cookies and parse the JSON reply. `headers` may
+   * include ones fetch cannot set (User-Agent, Origin); the worker applies
+   * them with a header rule. Absent where no such request is possible.
+   */
+  postJson?(url: string, body: unknown, headers?: Readonly<Record<string, string>>): Promise<unknown>;
   parseMaster: typeof parseMaster;
   parseMedia: typeof parseMedia;
   parseMpd: typeof parseMpd;
@@ -57,4 +63,6 @@ export interface SiteAdapter {
   detect(ctx: DetectContext): VideoSource[];
   /** Expand a detected source (e.g. manifests into variants). Returns the source unchanged on bad input. */
   resolve?(src: VideoSource, ctx: AdapterContext): Promise<VideoSource>;
+  /** Whether `resolve` still has work to do on this source. Default: it has an unexpanded HLS/DASH manifest. */
+  needsResolve?(src: VideoSource): boolean;
 }

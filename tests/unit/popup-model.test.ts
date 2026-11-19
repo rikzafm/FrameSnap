@@ -72,6 +72,12 @@ describe("qualityChoices", () => {
   it("lists best first, then heights descending", () => {
     expect(qualityChoices(source()).map((c) => c.label)).toEqual(["Best available", "1080p", "720p"]);
   });
+
+  it("names the codec only where two variants share a height", () => {
+    const v = (id: string, height: number, videoCodec: string) => ({ id, kind: "progressive" as const, url: `https://cdn/${id}`, container: "mp4" as const, height, videoCodec, hasAudio: false });
+    const src = source({ variants: [v("a", 1080, "avc1.640028"), v("b", 1080, "vp9"), v("c", 1080, "av01.0.08M.08"), v("d", 720, "avc1.4d401f")] });
+    expect(qualityChoices(src).map((c) => c.label)).toEqual(["Best available", "1080p · H.264", "1080p · VP9", "1080p · AV1", "720p"]);
+  });
 });
 
 function job(over: Partial<JobRecord>): JobRecord {

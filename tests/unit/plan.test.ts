@@ -34,6 +34,12 @@ describe("planDownload", () => {
     expect(p).toMatchObject({ route: "chunked", needsEngine: false, resumable: true });
   });
 
+  it("throttled progressive → chunked even when small", () => {
+    const muxed = { videoCodec: "avc1", audioCodec: "mp4a.40.2", sizeBytes: 10 * MB, acceptsRanges: true };
+    expect(planDownload(src([{ ...muxed, throttled: true }]), opts()).route).toBe("chunked");
+    expect(planDownload(src([muxed]), opts()).route).toBe("direct");
+  });
+
   it("large progressive without Range support → direct", () => {
     expect(planDownload(src([{ sizeBytes: 900 * MB }]), opts()).route).toBe("direct");
   });

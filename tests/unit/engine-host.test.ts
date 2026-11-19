@@ -142,6 +142,19 @@ describe('engine host', () => {
     expect(of('engine/running').at(-1)).toEqual({ t: 'engine/running', jobs: [] });
   });
 
+  it('a run superseded by a resume does not report its abort as the job failing', async () => {
+    let release!: () => void;
+    const { host, cdn, of } = setup(new MemoryChunkStore(), new Promise<void>((r) => (release = r)));
+    cdn.put('/v.mp4', { body: bytes(200 * KB), etag: '"e"' });
+    const msg = { t: 'engine/fetch' as const, jobId: 'j', tracks: [track('https://cdn.test/v.mp4', 200 * KB)] };
+    const first = host.handle(msg);
+    const second = host.handle(msg);
+    release();
+    await Promise.all([first, second]);
+    expect(of('engine/error')).toHaveLength(0);
+    expect(of('engine/fetched')).toHaveLength(1);
+  });
+
   it('fetches into the store, reporting each commit and progress, resumable', async () => {
     const { host, cdn, sent, of } = setup();
     cdn.put('/v.mp4', { body: bytes(200 * KB), etag: '"e"' });

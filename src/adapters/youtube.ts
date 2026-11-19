@@ -3,11 +3,33 @@
  * The main-world reader forwards `ytInitialPlayerResponse`; this adapter turns
  * `streamingData` into variants. Video-only adaptive formats are variants with
  * `hasAudio: false`, audio-only formats are `audioTracks`, muxed by the
- * download pipeline. Formats that only carry a `signatureCipher` are skipped.
+ * download pipeline. Formats that only carry a `signatureCipher` are skipped
+ * unless a cipher manifest (TV lookup) is at hand.
+ *
+ * The page's WEB response is usually SABR-only, so it may yield no variants
+ * at all. The source is still reported, and `resolve` asks the player API as
+ * VISIONOS client, then ANDROID, then TV with the signature cipher (see
+ * youtube-innertube.ts, youtube-cipher.ts), for downloadable URLs.
+ * Those variants carry the client's prefix (`vos:`, `and:`) so the lookup
+ * runs once per source.
  */
 import type { AudioTrack, Container, Variant, VideoSource } from '../core/model';
-import type { DetectContext, SiteAdapter } from './types';
+import type { AdapterContext, DetectContext, SiteAdapter } from './types';
 import { splitCodecString } from './codec-strings';
+import {
+  IFRAME_API_URL,
+  baseJsUrl,
+  formatUrl,
+  parseCipherManifest,
+  parsePlayerVersion,
+  type CipherManifest,
+} from './youtube-cipher';
+import {
+  PLAYER_CLIENTS,
+  PLAYER_ENDPOINT,
+  VISITOR_DATA_URL,
+  parseVisitorData,
+} from './youtube-innertube';
 
 /** Tag of the payload the main-world reader posts. */
 export const YT_TAP_KIND = 'youtube-player';
@@ -37,8 +59,17 @@ function containerOf(mime: string): Container {
   return 'unknown';
 }
 
-function buildVariant(f: Json, muxed: boolean): Variant | undefined {
-  const url = str(f.url);
+/** googlevideo caps one request to about playback speed unless the URL says `ratebypass=yes`. */
+function isThrottled(url: string): boolean {
+  try {
+    return new URL(url).searchParams.get('ratebypass') !== 'yes';
+  } catch {
+    return true;
+  }
+}
+
+function buildVariant(f: Json, muxed: boolean, prefix: string, cipher?: CipherManifest): Variant | undefined {
+  const url = formatUrl(f, cipher);
   const mime = str(f.mimeType) ?? '';
   const itag = f.itag;
   if (!url || typeof itag !== 'number' || !mime.startsWith('video/')) return undefined;
@@ -49,7 +80,7 @@ function buildVariant(f: Json, muxed: boolean): Variant | undefined {
   const bitrate = num(f.bitrate);
   const size = num(f.contentLength);
   return {
-    id: `itag:${itag}`,
+    id: `${prefix}itag:${itag}`,
     kind: 'progressive',
     url,
     container: containerOf(mime),
@@ -60,12 +91,13 @@ function buildVariant(f: Json, muxed: boolean): Variant | undefined {
     ...(bitrate ? { bitrate } : {}),
     ...(size ? { sizeBytes: size } : {}),
     acceptsRanges: true,
+    ...(isThrottled(url) ? { throttled: true } : {}),
     hasAudio: muxed,
   };
 }
 
-function buildAudio(f: Json): AudioTrack | undefined {
-  const url = str(f.url);
+function buildAudio(f: Json, prefix: string, cipher?: CipherManifest): AudioTrack | undefined {
+  const url = formatUrl(f, cipher);
   const mime = str(f.mimeType) ?? '';
   const itag = f.itag;
   if (!url || typeof itag !== 'number' || !mime.startsWith('audio/')) return undefined;
@@ -75,7 +107,7 @@ function buildAudio(f: Json): AudioTrack | undefined {
   const trackId = isObj(f.audioTrack) ? str(f.audioTrack.id) : undefined;
   const language = trackId?.split('.')[0];
   return {
-    id: `itag:${itag}`,
+    id: `${prefix}itag:${itag}`,
     kind: 'progressive',
     url,
     ...(codec ? { codec } : {}),
@@ -85,31 +117,54 @@ function buildAudio(f: Json): AudioTrack | undefined {
   };
 }
 
-function fromResponse(r: unknown, ctx: DetectContext): VideoSource | undefined {
-  if (!isObj(r) || !isObj(r.videoDetails) || !isObj(r.streamingData)) return undefined;
+interface Parsed {
+  videoId: string;
+  title?: string;
+  duration?: number;
+  variants: Variant[];
+  audioTracks: AudioTrack[];
+}
+
+function parseResponse(r: unknown, prefix: string, cipher?: CipherManifest): Parsed | undefined {
+  if (!isObj(r) || !isObj(r.videoDetails)) return undefined;
   if (isObj(r.playabilityStatus) && r.playabilityStatus.status !== 'OK') return undefined;
   const d = r.videoDetails;
   const videoId = str(d.videoId);
   if (!videoId || d.isLive === true) return undefined;
-  const sd = r.streamingData;
+  // a SABR-only response may carry no usable streamingData; the source is still worth a lookup
+  const sd = isObj(r.streamingData) ? r.streamingData : {};
   const muxed = (Array.isArray(sd.formats) ? sd.formats : []).filter(isObj);
   const adaptive = (Array.isArray(sd.adaptiveFormats) ? sd.adaptiveFormats : []).filter(isObj);
   const variants = [
-    ...muxed.map((f) => buildVariant(f, true)),
-    ...adaptive.map((f) => buildVariant(f, false)),
+    ...muxed.map((f) => buildVariant(f, true, prefix, cipher)),
+    ...adaptive.map((f) => buildVariant(f, false, prefix, cipher)),
   ].filter((v): v is Variant => !!v);
-  const audioTracks = adaptive.map(buildAudio).filter((a): a is AudioTrack => !!a);
-  if (!variants.length) return undefined;
+  const audioTracks = adaptive
+    .map((f) => buildAudio(f, prefix, cipher))
+    .filter((a): a is AudioTrack => !!a);
+  const title = str(d.title);
   const duration = num(d.lengthSeconds);
   return {
-    id: `youtube:${videoId}`,
-    site: 'youtube',
-    title: str(d.title) ?? ctx.pageTitle,
-    pageUrl: ctx.pageUrl,
-    thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+    videoId,
+    ...(title ? { title } : {}),
     ...(duration ? { duration } : {}),
     variants,
     audioTracks,
+  };
+}
+
+function fromResponse(r: unknown, ctx: DetectContext): VideoSource | undefined {
+  const p = parseResponse(r, '');
+  if (!p) return undefined;
+  return {
+    id: `youtube:${p.videoId}`,
+    site: 'youtube',
+    title: p.title ?? ctx.pageTitle,
+    pageUrl: ctx.pageUrl,
+    thumbnail: `https://i.ytimg.com/vi/${p.videoId}/hqdefault.jpg`,
+    ...(p.duration ? { duration: p.duration } : {}),
+    variants: p.variants,
+    audioTracks: p.audioTracks,
     protection: 'none',
     detectedBy: ['adapter'],
   };
@@ -126,4 +181,67 @@ function detect(ctx: DetectContext): VideoSource[] {
   return [...out.values()];
 }
 
-export const youtubeAdapter: SiteAdapter = { site: 'youtube', matches, detect };
+const needsResolve = (src: VideoSource): boolean =>
+  !src.variants.some((v) => PLAYER_CLIENTS.some((c) => v.id.startsWith(c.prefix)));
+
+/** Last cipher manifest read, by player version: base.js is about 2.5 MB. */
+let cipherCache: { version: string; manifest: CipherManifest } | undefined;
+
+async function cipherManifest(ctx: AdapterContext): Promise<CipherManifest | undefined> {
+  try {
+    const version = parsePlayerVersion(await ctx.fetchText(IFRAME_API_URL));
+    if (!version) return undefined;
+    if (cipherCache?.version === version) return cipherCache.manifest;
+    const manifest = parseCipherManifest(await ctx.fetchText(baseJsUrl(version)));
+    if (manifest) cipherCache = { version, manifest };
+    return manifest;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Test hook: forget the cached cipher manifest. */
+export function resetCipherCache(): void {
+  cipherCache = undefined;
+}
+
+/**
+ * Swap the page's variants for downloadable ones from the player API, trying
+ * each client in turn (VISIONOS, ANDROID, then TV with the signature cipher).
+ * If every client fails, the source is left as it was.
+ */
+async function resolve(src: VideoSource, ctx: AdapterContext): Promise<VideoSource> {
+  const videoId = src.id.startsWith('youtube:') ? src.id.slice('youtube:'.length) : '';
+  const postJson = ctx.postJson;
+  if (!postJson || !videoId || !needsResolve(src)) return src;
+  const visitorData = await ctx
+    .fetchText(VISITOR_DATA_URL)
+    .then(parseVisitorData, () => undefined);
+  for (const client of PLAYER_CLIENTS) {
+    const cipher = client.ciphered ? await cipherManifest(ctx) : undefined;
+    if (client.ciphered && !cipher) continue;
+    const reply = await postJson(
+      PLAYER_ENDPOINT,
+      client.requestBody(videoId, visitorData, cipher?.signatureTimestamp),
+      client.requestHeaders,
+    ).catch(() => undefined);
+    const p = parseResponse(reply, client.prefix, cipher);
+    if (!p || p.videoId !== videoId || !p.variants.length) continue;
+    return {
+      ...src,
+      ...(p.duration && !src.duration ? { duration: p.duration } : {}),
+      variants: p.variants,
+      audioTracks: p.audioTracks,
+      headers: { ...src.headers, ...client.mediaHeaders },
+    };
+  }
+  return src;
+}
+
+export const youtubeAdapter: SiteAdapter = {
+  site: 'youtube',
+  matches,
+  detect,
+  resolve,
+  needsResolve,
+};

@@ -91,6 +91,8 @@ export function createHarness(opts: { sources?: VideoSource[]; files?: Record<st
   const removedFiles: number[] = [];
   const resumed: number[] = [];
   const canResume = new Map<number, boolean>();
+  /** chrome.downloads state per id, for `search` (what a restarted worker reads). */
+  const dlStates = new Map<number, string>();
   const rules = new Map<number, chrome.declarativeNetRequest.Rule>();
   const ruleLog: string[] = [];
   const captureSent: { tabId: number; frameId: number; msg: WorkerToContent }[] = [];
@@ -167,7 +169,7 @@ export function createHarness(opts: { sources?: VideoSource[]; files?: Record<st
       },
       search: async ({ id }) => {
         const s = saved.find((x) => x.id === id);
-        return s ? [{ id, filename: `C:\\Downloads\\${s.filename}`, canResume: canResume.get(id) ?? false }] : [];
+        return s ? [{ id, filename: `C:\\Downloads\\${s.filename}`, canResume: canResume.get(id) ?? false, ...(dlStates.has(id) ? { state: dlStates.get(id) } : {}) }] : [];
       },
       resume: async (id) => void resumed.push(id),
       cancel: async () => undefined,
@@ -216,6 +218,7 @@ export function createHarness(opts: { sources?: VideoSource[]; files?: Record<st
     removedFiles,
     resumed,
     canResume,
+    dlStates,
     rules,
     ruleLog,
     lifecycle,

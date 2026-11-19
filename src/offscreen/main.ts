@@ -45,3 +45,9 @@ connectWithReconnect({
     void host.connect();
   },
 });
+
+// While the document is open it keeps the service worker awake: Chrome stops a worker after about
+// 30 s without events, and a save or a long ffmpeg run sends none. `engine/status` is cheap and the
+// worker ignores it unless it asked.
+const HEARTBEAT_MS = 20_000;
+setInterval(() => void host.handle({ t: 'engine/status' }), HEARTBEAT_MS);

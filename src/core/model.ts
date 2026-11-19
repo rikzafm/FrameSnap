@@ -28,6 +28,8 @@ export interface Variant {
   hasAudio: boolean;
   /** True when the server answered with `Accept-Ranges: bytes`. */
   acceptsRanges?: boolean;
+  /** The server holds one request to about playback speed; short ranged requests each start fast. */
+  throttled?: boolean;
   /** HLS/DASH: playlist is live (window moves). */
   live?: boolean;
 }

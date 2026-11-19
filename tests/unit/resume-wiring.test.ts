@@ -314,6 +314,43 @@ describe("startup recovery and cleanup", () => {
     expect(rec(h, jobId)!.status).toBe("running"); // the live one is untouched
   });
 
+  it("recover finishes a job whose save completed while the worker was gone", async () => {
+    const h = createHarness({ sources: [big("s1")] });
+    h.cdn.put("/big.mp4", { body: bytes(51 * MB, 3), etag: '"e"' });
+    for (const s of ["s1", "s2"]) h.cdn.validSigs.add(s);
+    const jobId = await h.download("big", { format: "mkv" });
+    await h.until(() => h.saved.length === 1);
+    await h.jobs.flush();
+    expect(rec(h, jobId)).toMatchObject({ status: "running", phase: "save", downloadId: h.saved[0]!.id });
+
+    // the same record as a dead worker left it; Chrome has finished the file since
+    h.area.data[jobKey("ghost")] = { ...rec(h, jobId)!, id: "ghost" };
+    h.dlStates.set(h.saved[0]!.id, "complete");
+    await h.orch.recover();
+    await h.until(() => rec(h, "ghost")?.status === "done");
+    expect(h.events).toContainEqual(expect.objectContaining({ t: "done", jobId: "ghost" }));
+    expect(h.history.some((e) => e.id === "ghost")).toBe(true);
+    h.complete(h.saved[0]!.id);
+  });
+
+  it("a second Resume click while the first waits for the page is ignored", async () => {
+    const p = page([]);
+    const h = createHarness({ sources: [big("s1")], deps: p.deps });
+    h.cdn.put("/big.mp4", { body: bytes(51 * MB, 3), etag: '"e"' });
+    for (const s of ["s1", "s2"]) h.cdn.validSigs.add(s);
+    h.cdn.failures.push((_p, n) => (n >= 5 ? "network" : undefined));
+    const jobId = await h.download("big", { format: "mkv" });
+    await h.finished(jobId);
+
+    h.cdn.failures.length = 0;
+    p.state.sources = [big("s2")];
+    h.sent.length = 0;
+    await Promise.all([h.orch.resume(jobId, 1), h.orch.resume(jobId, 1)]);
+    await saveAndComplete(h, jobId);
+    expect(h.sent.filter((m) => m.t === "engine/fetch")).toHaveLength(1);
+    expect(h.events.some((e) => e.jobId === jobId && e.t === "cancelled")).toBe(false);
+  });
+
   it("sweep drops chunks of jobs older than 7 days, their records, and chunks with no record", async () => {
     const h = createHarness({ sources: [big("s1")] });
     h.cdn.put("/big.mp4", { body: bytes(51 * MB, 3), etag: '"e"' });

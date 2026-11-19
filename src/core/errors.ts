@@ -8,6 +8,7 @@ export type ErrorCode =
   | "oom"
   | "tainted"
   | "unsupported"
+  | "not-playing"
   | "permission"
   | "changed"
   | "not-found"
@@ -46,6 +47,11 @@ export const ERROR_COPY: Record<ErrorCode, ErrorCopy> = {
   oom: { message: "The browser ran out of memory while converting. Try a shorter range.", retryable: true, action: "retry" },
   tainted: { message: "This frame could not be read directly. Captured at screen resolution.", retryable: false, action: "none" },
   unsupported: { message: "This video format is not supported.", retryable: false, action: "none" },
+  "not-playing": {
+    message: "Play the video, then try again. It is recorded as it plays, so keep it playing.",
+    retryable: true,
+    action: "retry",
+  },
   permission: { message: "Frame Snap needs access to this site.", retryable: true, action: "grant" },
   changed: { message: "The video changed since the last attempt. Starting over.", retryable: true, action: "retry" },
   "not-found": {

@@ -66,9 +66,27 @@ export interface QualityChoice {
   label: string;
 }
 
+/** Short display name of a video codec string, or undefined when it is not one we name. */
+export function codecName(codec: string | undefined): string | undefined {
+  const c = codec?.toLowerCase() ?? "";
+  if (c.startsWith("avc")) return "H.264";
+  if (c.startsWith("hev") || c.startsWith("hvc")) return "HEVC";
+  if (c.startsWith("vp09") || c.startsWith("vp9")) return "VP9";
+  if (c.startsWith("vp8")) return "VP8";
+  if (c.startsWith("av01")) return "AV1";
+  return undefined;
+}
+
 export function qualityChoices(source: VideoSource): QualityChoice[] {
   const withHeight = source.variants.filter((v) => v.height !== undefined).sort((a, b) => (b.height ?? 0) - (a.height ?? 0));
-  return [{ value: "best", label: "Best available" }, ...withHeight.map((v) => ({ value: v.id, label: `${v.height}p` }))];
+  const perHeight = new Map<number, number>();
+  for (const v of withHeight) perHeight.set(v.height!, (perHeight.get(v.height!) ?? 0) + 1);
+  // YouTube offers each height in several codecs: name the codec only where the heights collide
+  const label = (h: number, codec: string | undefined) => {
+    const name = (perHeight.get(h) ?? 0) > 1 ? codecName(codec) : undefined;
+    return name ? `${h}p · ${name}` : `${h}p`;
+  };
+  return [{ value: "best", label: "Best available" }, ...withHeight.map((v) => ({ value: v.id, label: label(v.height!, v.videoCodec) }))];
 }
 
 /* ---------- jobs ---------- */
