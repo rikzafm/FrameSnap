@@ -2,7 +2,7 @@
 import { FrameSnapError } from "./errors";
 import { estimateGifBytes } from "./estimate";
 import { formatBytes } from "./format";
-import { GIF_DEFAULT_SECONDS, GIF_MAX_SECONDS, type GifOptions, type TrimRange, type Variant, type VideoSource } from "./model";
+import { GIF_DEFAULT_SECONDS, type GifOptions, type TrimRange, type Variant, type VideoSource } from "./model";
 import { bestVariant } from "./rank";
 
 /** Keyboard step of a trim handle, in seconds. */
@@ -17,17 +17,16 @@ export function defaultGifTrim(currentTime: number, duration: number | undefined
   return { start, end: Math.min(start + GIF_DEFAULT_SECONDS, duration) };
 }
 
-/** Keep a range inside the clip, at least GIF_MIN_SECONDS long and at most GIF_MAX_SECONDS. */
+/** Keep a range inside the clip and at least GIF_MIN_SECONDS long. There is no upper limit. */
 export function clampTrim(trim: TrimRange, duration: number | undefined): TrimRange {
   const total = duration ?? Infinity;
   let start = Math.min(Math.max(0, trim.start), Math.max(0, total - GIF_MIN_SECONDS));
-  let end = Math.min(Math.max(trim.end, start + GIF_MIN_SECONDS), total);
-  if (end - start > GIF_MAX_SECONDS) end = start + GIF_MAX_SECONDS;
+  const end = Math.min(Math.max(trim.end, start + GIF_MIN_SECONDS), total);
   if (end - start < GIF_MIN_SECONDS) start = Math.max(0, end - GIF_MIN_SECONDS);
   return { start, end };
 }
 
-/** Move one handle by `steps` keyboard steps. Past the 30 s limit the other handle follows. */
+/** Move one handle by `steps` keyboard steps. */
 export function moveHandle(trim: TrimRange, which: "start" | "end", steps: number, duration: number | undefined): TrimRange {
   return setHandle(trim, which, trim[which] + steps * GIF_TRIM_STEP, duration);
 }
@@ -37,20 +36,11 @@ export const GIF_DRAG_STEP = 0.1;
 // toFixed drops float noise such as 0.30000000000000004
 const snapDrag = (t: number) => Number((Math.round(t / GIF_DRAG_STEP) * GIF_DRAG_STEP).toFixed(3));
 
-/**
- * Put one handle at `value`: it cannot cross the other handle, and a range
- * longer than GIF_MAX_SECONDS drags the other handle along.
- */
+/** Put one handle at `value`, inside the clip; it cannot cross the other handle. */
 export function setHandle(trim: TrimRange, which: "start" | "end", value: number, duration: number | undefined): TrimRange {
   const total = duration ?? Infinity;
-  if (which === "start") {
-    const start = Math.min(Math.max(0, value), trim.end - GIF_MIN_SECONDS);
-    const end = trim.end - start > GIF_MAX_SECONDS ? Math.min(start + GIF_MAX_SECONDS, total) : trim.end;
-    return { start, end };
-  }
-  const end = Math.min(Math.max(value, trim.start + GIF_MIN_SECONDS), total);
-  const start = end - trim.start > GIF_MAX_SECONDS ? end - GIF_MAX_SECONDS : trim.start;
-  return { start, end };
+  if (which === "start") return { start: Math.min(Math.max(0, value), trim.end - GIF_MIN_SECONDS), end: trim.end };
+  return { start: trim.start, end: Math.min(Math.max(value, trim.start + GIF_MIN_SECONDS), total) };
 }
 
 /** A handle dragged to time `t`, snapped to GIF_DRAG_STEP. */

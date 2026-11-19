@@ -6,7 +6,7 @@ your browser. Licensed GPL-3.0-or-later.
 
 - **Video**: pick a quality, format (MP4, WebM, MKV, MOV, MP3, M4A), audio and an optional trim.
   Large files download in chunks and can resume after a failure or a browser restart.
-- **GIF**: up to 30 s, with frame rate, width, loop and dither options and a preview before saving.
+- **GIF**: any length, with frame rate, width, loop and dither options and a preview before saving.
 - **Screenshot**: snap the current frame at video resolution (PNG, JPEG, WebP), step frame by frame,
   burst, or copy to the clipboard. Default shortcut: Alt+Shift+S.
 

@@ -50,7 +50,7 @@ export const MPD_CMAF = `<?xml version="1.0"?>
 </MPD>`;
 
 /** Legacy DASH_* names, with audio. */
-export const MPD_LEGACY_URL = "https://v.redd.it/p7q8r9s0/DASHPlaylist.mpd?a=1&v=1";
+export const MPD_LEGACY_URL = "https://v.redd.it/p7q8r9s0/DASHPlaylist.mpd";
 export const MPD_LEGACY = `<?xml version="1.0"?>
 <MPD type="static" mediaPresentationDuration="PT8S" xmlns="urn:mpeg:dash:schema:mpd:2011">
   <Period>

@@ -11,6 +11,11 @@ describe("resolveDefaultQuality", () => {
     expect(resolveDefaultQuality(src, "h500")).toBe("c");
   });
 
+  it("caps a portrait clip by its short side", () => {
+    const tall = { variants: [{ id: "0", width: 1080, height: 1920 }, { id: "1", width: 720, height: 1280 }] } as unknown as VideoSource;
+    expect(resolveDefaultQuality(tall, "h720")).toBe("1");
+  });
+
   it("falls back to best when nothing fits or the value is unknown", () => {
     expect(resolveDefaultQuality(src, "h240")).toBe("best");
     expect(resolveDefaultQuality(src, "zzz")).toBe("best");

@@ -4,6 +4,7 @@
  */
 import { DEFAULT_TEMPLATE } from "./filename";
 import type { AudioMode, GifOptions, OutputFormat, VideoSource } from "./model";
+import { qualityLines } from "./rank";
 
 export const SETTINGS_VERSION = 1;
 
@@ -71,6 +72,8 @@ export function resolveDefaultQuality(source: Pick<VideoSource, "variants">, pre
   const m = /^h(\d+)$/.exec(pref);
   if (!m) return "best";
   const cap = Number(m[1]);
-  const fit = source.variants.filter((v) => v.height !== undefined && v.height <= cap).sort((a, b) => (b.height ?? 0) - (a.height ?? 0))[0];
+  const fit = source.variants
+    .filter((v) => (qualityLines(v) ?? Infinity) <= cap)
+    .sort((a, b) => (qualityLines(b) ?? 0) - (qualityLines(a) ?? 0))[0];
   return fit ? fit.id : "best";
 }

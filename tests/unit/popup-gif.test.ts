@@ -59,13 +59,13 @@ describe("GIF tab", () => {
     expect(root.textContent).toContain("2.0 s");
   });
 
-  it("moves a handle with the arrow keys in 0.5 s steps and keeps the 30 s limit", () => {
+  it("moves a handle with the arrow keys in 0.5 s steps, with no 30 s limit", () => {
     make([source("a")]);
     keydown(endH(), "ArrowRight");
     expect(endH().getAttribute("aria-valuenow")).toBe("14.5");
     for (let i = 0; i < 6; i++) keydown(endH(), "PageUp");
     const span = Number(endH().getAttribute("aria-valuenow")) - Number(startH().getAttribute("aria-valuenow"));
-    expect(span).toBeLessThanOrEqual(30);
+    expect(span).toBeGreaterThan(30);
     keydown(startH(), "ArrowLeft");
     expect(Number(startH().getAttribute("aria-valuenow"))).toBeLessThan(Number(endH().getAttribute("aria-valuenow")));
   });

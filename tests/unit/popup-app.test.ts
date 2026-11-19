@@ -350,3 +350,52 @@ describe("mode memory", () => {
     expect(await mem.get("https://other.org/")).toBe("video");
   });
 });
+
+describe("GIF image", () => {
+  const gif: VideoSource = {
+    id: "gif:1",
+    site: "generic",
+    title: "dancing cat",
+    pageUrl: "https://example.com/p",
+    variants: [{ id: "g:1", kind: "progressive", url: "https://c/cat.gif", container: "gif", width: 480, height: 270, sizeBytes: 3 * MB, hasAudio: false }],
+    audioTracks: [],
+    protection: "none",
+    detectedBy: ["dom"],
+  };
+
+  it("offers the original .gif with no mode tabs, and downloads it as gif", async () => {
+    make().handle({ t: "media/updated", tabId: 5, sources: [gif] });
+    expect(q('[role="tablist"]')).toBeNull();
+    expect(byText(".card-meta", "GIF · 480×270")).toBeTruthy();
+    expect(q("#filename-preview")!.textContent).toMatch(/\.gif$/);
+    byText("button", "Download GIF")!.click();
+    expect(posted).toContainEqual({ t: "job/download", tabId: 5, sourceId: "gif:1", options: expect.objectContaining({ format: "gif" }) });
+    expect(await axeViolations()).toEqual([]);
+  });
+});
+
+describe("Download GIF on an X / Reddit GIF", () => {
+  const clip = (extra: Partial<VideoSource>): VideoSource => ({ ...source("x:1", "funny gif"), site: "x", duration: 6, ...extra });
+
+  it("saves the original .gif when the site kept one", () => {
+    make().handle({ t: "media/updated", tabId: 5, sources: [clip({ gifUrl: "https://i.redd.it/a.gif", animatedGif: true })] });
+    byText("button", "Download GIF")!.click();
+    expect(posted).toContainEqual({ t: "job/download", tabId: 5, sourceId: "x:1", options: expect.objectContaining({ format: "gif" }) });
+  });
+
+  it("otherwise renders the whole clip at full quality and saves it without a preview", () => {
+    const popup = make();
+    popup.handle({ t: "media/updated", tabId: 5, sources: [clip({ animatedGif: true })] });
+    byText("button", "Download GIF")!.click();
+    expect(posted).toContainEqual({ t: "job/gif", tabId: 5, sourceId: "x:1", options: { trim: { start: 0, end: 6 }, fps: "source", width: "original", loop: 0, dither: true } });
+    popup.handle({ t: "job/event", event: { t: "queued", jobId: "j1" } });
+    popup.handle({ t: "job/event", event: { t: "gif-ready", jobId: "j1", url: "blob:x", bytes: 10, filename: "funny gif.gif", title: "funny gif" } });
+    expect(posted).toContainEqual({ t: "job/save", jobId: "j1" });
+    expect(byText("button", "Save")).toBeUndefined();
+  });
+
+  it("is not offered on an ordinary video", () => {
+    make().handle({ t: "media/updated", tabId: 5, sources: [clip({})] });
+    expect(byText("button", "Download GIF")).toBeUndefined();
+  });
+});

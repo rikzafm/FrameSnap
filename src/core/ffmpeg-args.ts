@@ -87,7 +87,9 @@ export interface GifCommands {
 export function buildGifArgs(opts: GifOptions, input: string, output: string, src: { width: number; height: number }, seek: Seek): GifCommands {
   const { width } = gifDimensions(opts, src.width, src.height);
   const palette = "palette.png";
-  const base = `fps=${opts.fps},scale=${width}:-2:flags=lanczos`;
+  // "source" keeps the clip's own frames: a GIF that a site turned into MP4 already has GIF timing
+  const scale = `scale=${width}:-2:flags=lanczos`;
+  const base = opts.fps === "source" ? scale : `fps=${opts.fps},${scale}`;
   const dither = opts.dither ? "sierra2_4a" : "none";
   return {
     palette,

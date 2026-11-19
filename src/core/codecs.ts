@@ -58,6 +58,7 @@ const VIDEO_OK: Record<OutputFormat, VideoFamily[]> = {
   mkv: ["h264", "hevc", "vp8", "vp9", "av1"],
   mp3: [],
   m4a: [],
+  gif: [],
 };
 
 const AUDIO_OK: Record<OutputFormat, AudioFamily[]> = {
@@ -67,6 +68,7 @@ const AUDIO_OK: Record<OutputFormat, AudioFamily[]> = {
   mkv: ["aac", "mp3", "opus", "vorbis", "ac3"],
   mp3: ["mp3"],
   m4a: ["aac"],
+  gif: [],
 };
 
 export function videoFits(family: VideoFamily, format: OutputFormat): boolean {
@@ -88,9 +90,10 @@ export const OUTPUT_META: Record<OutputFormat, { extension: string; mime: string
   mov: { extension: "mov", mime: "video/quicktime", ffmpegFormat: "mov" },
   mp3: { extension: "mp3", mime: "audio/mpeg", ffmpegFormat: "mp3" },
   m4a: { extension: "m4a", mime: "audio/mp4", ffmpegFormat: "ipod" },
+  gif: { extension: "gif", mime: "image/gif", ffmpegFormat: "gif" },
 };
 
 /** Output container that a progressive source already is, if any. */
 export function containerMatches(container: Container, format: OutputFormat): boolean {
-  return (container === "mp4" && format === "mp4") || (container === "webm" && format === "webm");
+  return (container === "mp4" && format === "mp4") || (container === "webm" && format === "webm") || (container === "gif" && format === "gif");
 }

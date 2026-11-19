@@ -78,6 +78,13 @@ describe("qualityChoices", () => {
     const src = source({ variants: [v("a", 1080, "avc1.640028"), v("b", 1080, "vp9"), v("c", 1080, "av01.0.08M.08"), v("d", 720, "avc1.4d401f")] });
     expect(qualityChoices(src).map((c) => c.label)).toEqual(["Best available", "1080p · H.264", "1080p · VP9", "1080p · AV1", "720p"]);
   });
+
+  it("names a portrait rendition by its short side (Reddit's vertical clips)", () => {
+    const v = (id: string, width: number, height: number) => ({ id, kind: "dash" as const, url: "https://v.redd.it/x/DASHPlaylist.mpd", container: "fmp4" as const, width, height, hasAudio: false });
+    const src = source({ variants: [v("0", 1080, 1920), v("1", 720, 1280), v("2", 480, 854)] });
+    expect(qualityChoices(src).map((c) => c.label)).toEqual(["Best available", "1080p", "720p", "480p"]);
+    expect(describeDownload(src, opts({ quality: "1" }), date).heightLabel).toBe("720p");
+  });
 });
 
 function job(over: Partial<JobRecord>): JobRecord {

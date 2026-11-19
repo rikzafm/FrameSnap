@@ -8,7 +8,7 @@ import type { WorkerToPopup, PopupToWorker } from "../core/messages";
 import { ERROR_COPY, type ErrorCode } from "../core/errors";
 import { clampTrim, defaultGifTrim } from "../core/gif";
 import { resolveDefaultQuality } from "../core/settings";
-import type { AudioMode, DownloadOptions, GifOptions, OutputFormat, VideoSource } from "../core/model";
+import { hasGifDownload, isGifImage, type AudioMode, type DownloadOptions, type GifOptions, type OutputFormat, type VideoSource } from "../core/model";
 import type { SiteAccessResult } from "../platform/site-access";
 import { BURST_CAP, DEFAULT_SNAP_OPTIONS, type SnapFormat, type SnapOptions } from "../core/snap";
 import { button, h, ICONS, iconButton, nextId, progress, radioCards, segmented, selectRow, svgIcon, switchControl, tabs, toast } from "../ui/components";
@@ -44,12 +44,16 @@ interface JobMeta extends JobView {
   options?: DownloadOptions;
   /** Set for GIF jobs, so Retry makes a GIF again. */
   gif?: GifOptions;
+  /** "Download GIF" on an X / Reddit GIF: save the render straight away instead of previewing it. */
+  autoSave?: boolean;
   /** Last progress sample, for the speed estimate. */
   sampleAt?: number;
   /** Bytes held at the last sample. */
   sampleRatio?: number;
 }
 
+/** "Download GIF" range when the clip's length is unknown. */
+const WHOLE_CLIP_FALLBACK_SECONDS = 3600;
 const SEGMENT_FORMATS: OutputFormat[] = ["mp4", "webm", "mkv", "mov"];
 const FORMAT_LABELS: Record<string, string> = { webm: "WebM" };
 const MODE_TABS = [
@@ -63,6 +67,72 @@ function fmtDuration(s?: number): string {
   if (s === undefined) return "";
   const m = Math.floor(s / 60);
   return `${m}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+}
+
+/** "GIF · 480×270" for a GIF image's card. */
+function gifImageLabel(src: VideoSource): string {
+  const v = src.variants[0];
+  return v?.width && v.height ? `GIF · ${v.width}×${v.height}` : "GIF";
+}
+
+interface TrimBarProps {
+  /** Video length in seconds; the bar is inert when 0. */
+  total: number;
+  start: number;
+  end: number;
+  onDrag(active: boolean): void;
+  /** Called once on release with the new range, rounded to 0.1 s. */
+  onCommit(start: number, end: number): void;
+}
+
+const TRIM_MIN_GAP = 0.1;
+
+/** Draggable range bar for the Video tab: paints in place while dragging, commits on release. */
+function trimBar(p: TrimBarProps): HTMLElement {
+  const { total } = p;
+  const pct = (t: number) => (total ? (t / total) * 100 : 0);
+  let { start, end } = p;
+  const keep = h("span", { class: "trim-keep" });
+  const bar = h("div", { class: "trim-bar", role: "group", "aria-label": "Trim range" }, keep);
+  const paint = () => {
+    keep.style.left = `${pct(start)}%`;
+    keep.style.right = `${100 - Math.max(pct(start), pct(end))}%`;
+    const label = bar.parentElement?.querySelector(".trim-toggle");
+    if (label) label.textContent = `${fmtDuration(start)} – ${fmtDuration(end)}`;
+  };
+  paint();
+  if (total <= 0) return bar;
+  bar.style.touchAction = "none";
+  bar.style.cursor = "ew-resize";
+  bar.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    const rect = bar.getBoundingClientRect();
+    if (rect.width === 0) return;
+    e.preventDefault();
+    const timeAt = (x: number) => Math.min(total, Math.max(0, ((x - rect.left) / rect.width) * total));
+    const t0 = timeAt(e.clientX);
+    const which: "start" | "end" = Math.abs(t0 - start) <= Math.abs(t0 - end) ? (t0 > end ? "end" : "start") : "end";
+    const apply = (t: number) => {
+      if (which === "start") start = Math.min(Math.max(0, t), end - TRIM_MIN_GAP);
+      else end = Math.max(Math.min(total, t), start + TRIM_MIN_GAP);
+      paint();
+    };
+    p.onDrag(true);
+    bar.setPointerCapture?.(e.pointerId);
+    apply(t0);
+    const move = (m: PointerEvent) => apply(timeAt(m.clientX));
+    const up = () => {
+      bar.removeEventListener("pointermove", move);
+      bar.removeEventListener("pointerup", up);
+      bar.removeEventListener("pointercancel", up);
+      p.onDrag(false);
+      p.onCommit(Number(start.toFixed(1)), Number(end.toFixed(1)));
+    };
+    bar.addEventListener("pointermove", move);
+    bar.addEventListener("pointerup", up);
+    bar.addEventListener("pointercancel", up);
+  });
+  return bar;
 }
 
 export function createPopup(root: HTMLElement, deps: PopupDeps) {
@@ -89,7 +159,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     template: deps.defaults.filenameTemplate,
     remembered: deps.hasAccess === true,
     jobs: new Map<string, JobMeta>(),
-    pending: [] as { title: string; sourceId: string; options: DownloadOptions; gif?: GifOptions; totalBytes?: number }[],
+    pending: [] as { title: string; sourceId: string; options: DownloadOptions; gif?: GifOptions; totalBytes?: number; autoSave?: boolean }[],
     resumable: [] as JobRecord[],
     bannerOpen: false,
     toast: undefined as string | undefined,
@@ -138,6 +208,8 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
   const isBlocked = (src: VideoSource) => src.protection === "drm";
 
   function options(src: VideoSource): DownloadOptions {
+    // a GIF image is saved as its original file: nothing to choose but the name
+    if (isGifImage(src)) return { format: "gif", quality: "best", audio: "remove", filenameTemplate: s.template };
     const o: DownloadOptions = { format: s.format, quality: quality(src), audio: s.audio, filenameTemplate: s.template };
     const end = Math.min(s.trimEnd || (src.duration ?? 0), src.duration ?? Infinity);
     if (s.trimOn && end > s.trimStart) o.trim = { start: s.trimStart, end };
@@ -161,6 +233,21 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     const options = gifOptions(gifChoices(src));
     s.pending.push({ title: src.title, sourceId: src.id, options: { format: "mp4", quality: "best", audio: "remove", filenameTemplate: s.template }, gif: options });
     deps.post({ t: "job/gif", tabId: deps.tab.id, sourceId: src.id, options });
+  }
+
+  /**
+   * "Download GIF" on a video that started life as a GIF. The original file
+   * when the site kept it (Reddit), else the whole clip rendered back to GIF
+   * with nothing thrown away: full width, every frame at its own timing,
+   * dithered, looping forever.
+   */
+  function downloadGif(src: VideoSource) {
+    if (src.gifUrl) return startDownload(src, { ...options(src), format: "gif" });
+    // unknown length: a range past the end just stops where the clip does
+    const end = src.duration ?? WHOLE_CLIP_FALLBACK_SECONDS;
+    const gif: GifOptions = { trim: { start: 0, end }, fps: "source", width: "original", loop: 0, dither: true };
+    s.pending.push({ title: src.title, sourceId: src.id, options: { format: "mp4", quality: "best", audio: "remove", filenameTemplate: s.template }, gif, autoSave: true });
+    deps.post({ t: "job/gif", tabId: deps.tab.id, sourceId: src.id, options: gif });
   }
 
   function gifTab(src: VideoSource): HTMLElement {
@@ -234,7 +321,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
 
   function summary(src: VideoSource): HTMLElement {
     const d = describeDownload(src, options(src), deps.now());
-    const meta = [d.heightLabel, d.estimate].filter(Boolean).join(" · ");
+    const meta = [isGifImage(src) ? gifImageLabel(src) : d.heightLabel, d.estimate].filter(Boolean).join(" · ");
     const duration = fmtDuration(src.duration);
     return h(
       "section",
@@ -294,9 +381,18 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     const range = s.trimOn ? `${fmtDuration(s.trimStart)} – ${fmtDuration(s.trimEnd || src.duration)}` : full;
     // selection bar: the kept part of the video, as a share of its length
     const total = src.duration ?? 0;
-    const from = s.trimOn && total ? Math.min(100, (s.trimStart / total) * 100) : 0;
-    const to = s.trimOn && total ? Math.min(100, ((s.trimEnd || total) / total) * 100) : 100;
-    const bar = h("div", { class: "trim-bar", "aria-hidden": "true" }, h("span", { class: "trim-keep", style: `left:${from}%;right:${100 - Math.max(from, to)}%` }));
+    const bar = trimBar({
+      total,
+      start: s.trimOn ? s.trimStart : 0,
+      end: s.trimOn ? s.trimEnd || total : total,
+      onDrag: (active) => (dragging = active),
+      onCommit: (start, end) => {
+        s.trimOn = start > 0 || end < total;
+        s.trimStart = start;
+        s.trimEnd = end;
+        render();
+      },
+    });
     panel.append(
       h(
         "div",
@@ -315,16 +411,28 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
         h("label", { class: "trim-field", for: id }, label, h("input", { id, type: "number", min: 0, step: "0.1", value: String(value), "data-key": id, onInput: (e) => set(Number((e.target as HTMLInputElement).value) || 0) }));
       panel.append(h("div", { class: "row trim-fields", id: "trim-fields" }, num("Start (s)", "trim-start", s.trimStart, (n) => (s.trimStart = n)), num("End (s)", "trim-end", s.trimEnd || src.duration || 0, (n) => (s.trimEnd = n))));
     }
-    panel.append(
+    panel.append(...fileNameRows(src, d.filename));
+    if (d.error) panel.append(h("p", { class: "warning", role: "alert" }, ERROR_COPY[d.error.code].message));
+    for (const w of d.warnings) {
+      if (w.code === "too-large") panel.append(errorNotice("too-large", { "lower-quality": () => chooseLowerQuality(src) }));
+      else panel.append(h("p", { class: "warning", role: "status" }, w.text));
+    }
+    return panel;
+  }
+
+  /** The file name preview, and the template field when it is open. */
+  function fileNameRows(src: VideoSource, filename: string): HTMLElement[] {
+    const rows: HTMLElement[] = [];
+    rows.push(
       h(
         "div",
         { class: "row" },
         h("span", { class: "row-label" }, "File name"),
-        h("button", { type: "button", class: "row-value filename-preview", id: "filename-preview", "aria-label": `File name: ${d.filename}`, "aria-expanded": String(s.nameOpen), "aria-controls": "name-edit", "data-key": "name", onClick: () => ((s.nameOpen = !s.nameOpen), render("name")) }, d.filename),
+        h("button", { type: "button", class: "row-value filename-preview", id: "filename-preview", "aria-label": `File name: ${filename}`, "aria-expanded": String(s.nameOpen), "aria-controls": "name-edit", "data-key": "name", onClick: () => ((s.nameOpen = !s.nameOpen), render("name")) }, filename),
       ),
     );
     if (s.nameOpen) {
-      panel.append(
+      rows.push(
         h(
           "div",
           { class: "row row-stack", id: "name-edit" },
@@ -333,11 +441,18 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
         ),
       );
     }
+    return rows;
+  }
+
+  /** A GIF image: saved as the original .gif, byte for byte, so only the file name is a choice. */
+  function gifImagePanel(src: VideoSource): HTMLElement {
+    const d = describeDownload(src, options(src), deps.now());
+    const panel = h("div", { class: "rows" });
+    panel.append(
+      h("div", { class: "row" }, h("span", { class: "row-label" }, "Format"), h("span", { class: "row-value" }, "GIF · original file")),
+      ...fileNameRows(src, d.filename),
+    );
     if (d.error) panel.append(h("p", { class: "warning", role: "alert" }, ERROR_COPY[d.error.code].message));
-    for (const w of d.warnings) {
-      if (w.code === "too-large") panel.append(errorNotice("too-large", { "lower-quality": () => chooseLowerQuality(src) }));
-      else panel.append(h("p", { class: "warning", role: "status" }, w.text));
-    }
     return panel;
   }
 
@@ -353,10 +468,14 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     const d = describeDownload(src, options(src), deps.now());
     const protectedVideo = isBlocked(src);
     const blocked = d.error !== undefined || d.warnings.some((w) => w.code === "too-large");
+    if (isGifImage(src)) {
+      return h("div", { class: "actions actions-main" }, button("Download GIF", () => startDownload(src, options(src)), { variant: "primary", disabled: blocked, key: "download" }));
+    }
     return h(
       "div",
       { class: "actions actions-main" },
       button("Download video", () => startDownload(src, options(src)), { variant: "primary", disabled: blocked, key: "download" }),
+      hasGifDownload(src) && !protectedVideo ? button("Download GIF", () => downloadGif(src), { key: "download-gif" }) : undefined,
       opts.gif
         ? button("GIF", () => {
             s.focused = true;
@@ -454,14 +573,16 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
 
   function singleView(src: VideoSource): HTMLElement {
     if (isBlocked(src)) return h("div", { class: "view" }, summary(src), protectedPanel(src));
-    const panel = h("div", { class: "panel", role: "tabpanel", id: PANEL_ID, "aria-labelledby": `tab-${s.mode}`, tabindex: 0 });
-    if (s.mode === "video") panel.append(videoPanel(src), actions(src));
-    else if (s.mode === "screenshot") panel.append(screenshotPanel(src));
-    else panel.append(gifTab(src));
     const back =
       s.sources.length > 1 && deps.pick === undefined
         ? button("All videos", () => ((s.focused = false), render("not-listed")), { variant: "link", key: "all-videos" })
         : undefined;
+    // no Video / GIF / Screenshot tabs: an image has no range to cut or frame to snap
+    if (isGifImage(src)) return h("div", { class: "view" }, back, summary(src), h("div", { class: "panel", id: PANEL_ID }, gifImagePanel(src), actions(src)));
+    const panel = h("div", { class: "panel", role: "tabpanel", id: PANEL_ID, "aria-labelledby": `tab-${s.mode}`, tabindex: 0 });
+    if (s.mode === "video") panel.append(videoPanel(src), actions(src));
+    else if (s.mode === "screenshot") panel.append(screenshotPanel(src));
+    else panel.append(gifTab(src));
     return h("div", { class: "view" }, back, summary(src), modeTabs(), panel, s.mode === "video" ? footer() : undefined);
   }
 
@@ -475,7 +596,8 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
         "Videos on this page",
         s.sources.map((x) => {
           const d = describeDownload(x, { format: s.format, quality: "best", audio: s.audio, filenameTemplate: s.template }, deps.now());
-          return { value: x.id, title: x.title, meta: [fmtDuration(x.duration), d.heightLabel, d.estimate].filter(Boolean).join(" · "), thumbnail: x.thumbnail };
+          const label = isGifImage(x) ? gifImageLabel(x) : d.heightLabel;
+          return { value: x.id, title: x.title, meta: [fmtDuration(x.duration), label, d.estimate].filter(Boolean).join(" · "), thumbnail: x.thumbnail };
         }),
         cur.id,
         (id) => {
@@ -486,6 +608,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
       ),
     );
     if (isBlocked(cur)) view.append(errorNotice("drm", {}), actions(cur));
+    else if (isGifImage(cur)) view.append(gifImagePanel(cur), actions(cur));
     else view.append(h("div", { class: "rows" }, ...formatQualityRows(cur)), actions(cur, { gif: true }));
     view.append(button("Not listed? Select a video on the page", () => deps.post({ t: "picker/start", tabId: deps.tab.id }), { variant: "link", key: "not-listed" }));
     return view;
@@ -554,7 +677,7 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
               const src = s.sources.find((x) => x.id === j.sourceId);
               if (!src) return;
               if (j.gif) {
-                s.pending.push({ title: src.title, sourceId: src.id, options: j.options, gif: j.gif });
+                s.pending.push({ title: src.title, sourceId: src.id, options: j.options, gif: j.gif, autoSave: j.autoSave });
                 deps.post({ t: "job/gif", tabId: deps.tab.id, sourceId: src.id, options: j.gif });
               } else startDownload(src, j.options);
             }
@@ -643,11 +766,15 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
       const prev = s.jobs.get(e.jobId);
       if (e.t === "queued") {
         const p = s.pending.shift();
-        s.jobs.set(e.jobId, { jobId: e.jobId, title: p?.title ?? "Download", status: "queued", phase: "fetch", ratio: 0, sourceId: p?.sourceId, options: p?.options, gif: p?.gif, totalBytes: p?.totalBytes });
+        s.jobs.set(e.jobId, { jobId: e.jobId, title: p?.title ?? "Download", status: "queued", phase: "fetch", ratio: 0, sourceId: p?.sourceId, options: p?.options, gif: p?.gif, totalBytes: p?.totalBytes, autoSave: p?.autoSave });
       } else {
         const base: JobMeta = prev ?? { jobId: e.jobId, title: "Download", status: "running", phase: "fetch", ratio: 0 };
         if (e.t === "failed") s.previews.delete(e.jobId);
-        if (e.t === "gif-ready") {
+        if (e.t === "gif-ready" && base.autoSave) {
+          // asked for as a download: no preview, save it
+          s.jobs.set(e.jobId, { ...base, status: "running", phase: "save", ratio: 1 });
+          deps.post({ t: "job/save", jobId: e.jobId });
+        } else if (e.t === "gif-ready") {
           s.jobs.delete(e.jobId);
           s.previews.set(e.jobId, { jobId: e.jobId, url: e.url, bytes: e.bytes, filename: e.filename, title: e.title });
         } else if (e.t === "progress") s.jobs.set(e.jobId, sampleProgress(base, e.phase, e.ratio, e.bytes, e.totalBytes));

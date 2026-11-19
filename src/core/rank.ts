@@ -61,6 +61,15 @@ export function rankSources(sources: readonly VideoSource[]): VideoSource[] {
   return foldCaptureDuplicates(sources).sort((a, b) => score(b) - score(a) || a.id.localeCompare(b.id));
 }
 
+/**
+ * The "720p" a rendition is named by: its short side, so a 720×1280 portrait
+ * clip (common on Reddit) reads as 720p, not 1280p. Height alone when the
+ * width is unknown.
+ */
+export function qualityLines(v: { width?: number; height?: number }): number | undefined {
+  return v.width && v.height ? Math.min(v.width, v.height) : v.height;
+}
+
 /** Variant the "Best available" quality resolves to. */
 export function bestVariant(variants: readonly Variant[]): Variant | undefined {
   let best: Variant | undefined;

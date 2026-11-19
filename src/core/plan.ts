@@ -20,8 +20,8 @@ import {
 } from "./codecs";
 import { FrameSnapError } from "./errors";
 import { estimateDownloadBytes, type SizeEstimate } from "./estimate";
-import { LARGE_FILE_BYTES, type AudioTrack, type Container, type DownloadOptions, type OutputFormat, type TrimRange, type Variant, type VariantKind, type VideoSource } from "./model";
-import { bestVariant } from "./rank";
+import { LARGE_FILE_BYTES, isGifImage, type AudioTrack, type Container, type DownloadOptions, type OutputFormat, type TrimRange, type Variant, type VariantKind, type VideoSource } from "./model";
+import { bestVariant, qualityLines } from "./rank";
 
 /** Progressive files at or above this size go through the resumable chunked route. */
 export const CHUNKED_MIN_BYTES = 50 * 1024 * 1024;
@@ -67,7 +67,7 @@ export interface DownloadPlan {
   notResumableReason?: "direct" | "live" | "capture";
   estimate?: SizeEstimate;
   warnings: PlanWarning[];
-  /** Height of the chosen video, for {resolution} in file names. */
+  /** The chosen video's "720p" (short side, see `qualityLines`), for labels and {resolution} in file names. */
   height?: number;
 }
 
@@ -144,8 +144,41 @@ function opFor(fits: boolean, frameAccurate: boolean): StreamOp {
   return fits && !frameAccurate ? "copy" : "encode";
 }
 
+/**
+ * A GIF image is saved as the file the page shows: chrome.downloads fetches it
+ * as is, so no frame, colour or timing is touched. Format, audio and trim do
+ * not apply.
+ */
+function planGifImage(source: VideoSource, opts: DownloadOptions): DownloadPlan {
+  const chosen = (opts.quality !== "best" && source.variants.find((v) => v.id === opts.quality)) || bestVariant(source.variants) || source.variants[0]!;
+  return {
+    route: "direct",
+    inputs: [toInput("video", chosen)],
+    video: "copy",
+    audio: "drop",
+    needsEngine: false,
+    output: { format: "gif", extension: OUTPUT_META.gif.extension, mime: OUTPUT_META.gif.mime },
+    frameAccurate: false,
+    resumable: false,
+    notResumableReason: "direct",
+    estimate: chosen.sizeBytes !== undefined ? { bytes: chosen.sizeBytes, confidence: "exact" } : undefined,
+    warnings: [],
+    height: qualityLines(chosen),
+  };
+}
+
 export function planDownload(source: VideoSource, opts: DownloadOptions): DownloadPlan {
   if (source.protection === "drm") throw new FrameSnapError("drm");
+  if (isGifImage(source)) return planGifImage(source, opts);
+  if (opts.format === "gif") {
+    // the original upload behind a site's MP4 rendition
+    if (source.gifUrl) {
+      const like = bestVariant(source.variants);
+      const original: Variant = { id: "gif:original", kind: "progressive", url: source.gifUrl, container: "gif", hasAudio: false, ...(like?.width ? { width: like.width } : {}), ...(like?.height ? { height: like.height } : {}) };
+      return planGifImage({ ...source, variants: [original] }, { ...opts, quality: original.id });
+    }
+    throw new FrameSnapError("unsupported", "this video has no .gif file to save");
+  }
 
   // "Audio only" always means an audio file; an audio format always means audio only.
   const format: OutputFormat = opts.audio === "only" && !isAudioFormat(opts.format) ? "m4a" : opts.format;
@@ -241,6 +274,6 @@ export function planDownload(source: VideoSource, opts: DownloadOptions): Downlo
     notResumableReason,
     estimate,
     warnings,
-    height: chosen?.height,
+    height: chosen && qualityLines(chosen),
   };
 }

@@ -8,6 +8,7 @@ import { formatBytes, formatSize, formatSpeed } from "../core/format";
 import type { JobPhase, JobRecord } from "../core/jobs/job";
 import { GIF_LOW_MEMORY_BYTES, gifWorkingSetBytes } from "../core/estimate";
 import type { DownloadOptions, GifOptions, VideoSource } from "../core/model";
+import { qualityLines } from "../core/rank";
 import { planDownload, type PlanWarning } from "../core/plan";
 
 export { formatBytes };
@@ -78,15 +79,18 @@ export function codecName(codec: string | undefined): string | undefined {
 }
 
 export function qualityChoices(source: VideoSource): QualityChoice[] {
-  const withHeight = source.variants.filter((v) => v.height !== undefined).sort((a, b) => (b.height ?? 0) - (a.height ?? 0));
+  const withHeight = source.variants
+    .filter((v) => v.height !== undefined)
+    .map((v) => ({ v, lines: qualityLines(v)! }))
+    .sort((a, b) => b.lines - a.lines);
   const perHeight = new Map<number, number>();
-  for (const v of withHeight) perHeight.set(v.height!, (perHeight.get(v.height!) ?? 0) + 1);
+  for (const { lines } of withHeight) perHeight.set(lines, (perHeight.get(lines) ?? 0) + 1);
   // YouTube offers each height in several codecs: name the codec only where the heights collide
   const label = (h: number, codec: string | undefined) => {
     const name = (perHeight.get(h) ?? 0) > 1 ? codecName(codec) : undefined;
     return name ? `${h}p · ${name}` : `${h}p`;
   };
-  return [{ value: "best", label: "Best available" }, ...withHeight.map((v) => ({ value: v.id, label: label(v.height!, v.videoCodec) }))];
+  return [{ value: "best", label: "Best available" }, ...withHeight.map(({ v, lines }) => ({ value: v.id, label: label(lines, v.videoCodec) }))];
 }
 
 /* ---------- jobs ---------- */

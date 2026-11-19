@@ -5,7 +5,7 @@
  */
 import { describeGif, dragHandle, GIF_DRAG_STEP, GIF_TRIM_STEP, gifSourceSize, nearestHandle, pickGifVariant, setHandle, shiftRange } from "../core/gif";
 import { formatBytes } from "../core/format";
-import { GIF_MAX_SECONDS, type GifOptions, type TrimRange, type VideoSource } from "../core/model";
+import type { GifOptions, TrimRange, VideoSource } from "../core/model";
 import { button, h, nextId, segmented, switchControl } from "../ui/components";
 import { gifMemoryWarning } from "./model";
 
@@ -214,7 +214,7 @@ export function gifPanel(p: GifPanelProps): HTMLElement {
     h(
       "div",
       { class: "row row-stack gif-range-row" },
-      h("div", { class: "gif-range-head" }, h("span", { class: "row-label" }, "Range"), h("span", { class: "gif-range-meta" }, label, h("span", { class: "gif-range-max" }, ` · max ${GIF_MAX_SECONDS} s`))),
+      h("div", { class: "gif-range-head" }, h("span", { class: "row-label" }, "Range"), h("span", { class: "gif-range-meta" }, label)),
       strip({
         src,
         trim: c.trim,

@@ -43,7 +43,8 @@ export function gifDimensions(opts: GifOptions, srcWidth: number, srcHeight: num
 }
 
 export function gifFrameCount(opts: GifOptions): number {
-  return Math.max(1, Math.round((opts.trim.end - opts.trim.start) * opts.fps));
+  const fps = opts.fps === "source" ? 30 : opts.fps;
+  return Math.max(1, Math.round((opts.trim.end - opts.trim.start) * fps));
 }
 
 export function estimateGifBytes(opts: GifOptions, srcWidth: number, srcHeight: number): { low: number; high: number } {

@@ -8,6 +8,7 @@
  */
 import { fnv1a } from "../core/jobs/chunks";
 import type { Container, DomFacts, Variant, VideoSource } from "../core/model";
+import { redditGifOriginal } from "../adapters/reddit";
 
 export interface DomDetectorOptions {
   document: Document;
@@ -31,14 +32,49 @@ export interface DomDetector {
 }
 
 const THUMB_WIDTH = 160;
+/** Smaller GIFs are spacers, tracking pixels and icons, not something to download. */
+const GIF_MIN_PX = 48;
 const MEDIA_EVENTS = ["loadedmetadata", "play", "pause", "ended"] as const;
 
+/** The `format` query parameter (Reddit previews: mp4, png8, pjpg, gif). */
+function formatParam(url: string): string | undefined {
+  try {
+    return new URL(url).searchParams.get("format")?.toLowerCase() ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function containerOf(url: string): Container {
+  if (formatParam(url) === "mp4") return "mp4";
   const path = url.split(/[?#]/)[0]!.toLowerCase();
   if (path.endsWith(".mp4") || path.endsWith(".m4v")) return "mp4";
   if (path.endsWith(".webm")) return "webm";
   if (path.endsWith(".ts")) return "ts";
   return "unknown";
+}
+
+/** The URL of an animated-GIF image, when this <img> shows one. */
+function gifUrlOf(img: HTMLImageElement): string | undefined {
+  const src = img.currentSrc || img.src || "";
+  if (!/^https?:/i.test(src)) return undefined;
+  const path = src.split(/[?#]/)[0]!.toLowerCase();
+  if (!path.endsWith(".gif")) return undefined;
+  // a still or MP4 of a Reddit GIF: the original file is the one to save
+  const original = redditGifOriginal(src);
+  if (original) return original;
+  const format = formatParam(src);
+  return format === undefined || format === "gif" ? src : undefined;
+}
+
+/** Last path segment without ".gif", for the title of a GIF that has no alt text. */
+function gifName(url: string): string {
+  try {
+    const last = decodeURIComponent(new URL(url).pathname.split("/").pop() ?? "");
+    return last.replace(/\.gif$/i, "");
+  } catch {
+    return "";
+  }
 }
 
 function visibleRatio(r: { left: number; top: number; right: number; bottom: number }, win: Window | null): number {
@@ -71,6 +107,7 @@ export function createDomDetector(opts: DomDetectorOptions): DomDetector {
   const keys = new WeakMap<HTMLVideoElement, string>();
   const byKey = new Map<string, WeakRef<HTMLVideoElement>>();
   const wired = new WeakSet<HTMLVideoElement>();
+  const wiredImages = new WeakSet<HTMLImageElement>();
   const observedRoots = new WeakSet<Node>();
   let counter = 0;
   let observer: MutationObserver | undefined;
@@ -88,14 +125,15 @@ export function createDomDetector(opts: DomDetectorOptions): DomDetector {
     return k;
   };
 
-  function collect(root: Document | ShadowRoot, out: HTMLVideoElement[]) {
+  function collect(root: Document | ShadowRoot, out: HTMLVideoElement[], images: HTMLImageElement[]) {
     if (running && !observedRoots.has(root)) {
       observedRoots.add(root);
       observer?.observe(root, { childList: true, subtree: true });
     }
     for (const el of root.querySelectorAll("*")) {
       if (el instanceof (doc.defaultView?.HTMLVideoElement ?? HTMLVideoElement)) out.push(el);
-      if (el.shadowRoot) collect(el.shadowRoot, out);
+      else if (el instanceof (doc.defaultView?.HTMLImageElement ?? HTMLImageElement)) images.push(el);
+      if (el.shadowRoot) collect(el.shadowRoot, out, images);
     }
   }
 
@@ -123,6 +161,9 @@ export function createDomDetector(opts: DomDetectorOptions): DomDetector {
       });
     }
     if (src.startsWith("blob:")) variants.push(...(opts.blobVariants?.(v, src, elementKey) ?? []));
+    // Reddit plays an uploaded GIF as preview.redd.it/<id>.gif?format=mp4
+    const gifUrl = /^https?:/i.test(src) ? redditGifOriginal(src) : undefined;
+    if (gifUrl) for (const x of variants) x.hasAudio = false;
     const frameUrl = urlOf();
     const source: VideoSource = {
       id: `dom:${fnv1a(src || frameUrl + elementKey)}`,
@@ -138,7 +179,35 @@ export function createDomDetector(opts: DomDetectorOptions): DomDetector {
       dom,
     };
     if (Number.isFinite(v.duration) && v.duration > 0) source.duration = v.duration;
+    if (gifUrl) {
+      source.gifUrl = gifUrl;
+      source.animatedGif = true;
+    }
     return source;
+  }
+
+  /**
+   * A GIF image as a source with one variant: the image's own URL. It has no
+   * frameRef (it is not a <video>, so snap and seek do not apply to it).
+   */
+  function describeGif(img: HTMLImageElement, url: string): VideoSource | undefined {
+    const rect = img.getBoundingClientRect();
+    const width = img.naturalWidth || Math.round(rect.width);
+    const height = img.naturalHeight || Math.round(rect.height);
+    if (width < GIF_MIN_PX || height < GIF_MIN_PX) return undefined;
+    const variant: Variant = { id: `g:${fnv1a(url)}`, kind: "progressive", url, container: "gif", width, height, hasAudio: false };
+    return {
+      id: `gif:${fnv1a(url)}`,
+      site: "generic",
+      title: img.alt.trim() || img.title.trim() || gifName(url) || doc.title || "GIF",
+      pageUrl: urlOf(),
+      thumbnail: url,
+      variants: [variant],
+      audioTracks: [],
+      protection: "none",
+      detectedBy: ["dom"],
+      dom: { visibleRatio: visibleRatio(rect, doc.defaultView), rectWidth: rect.width, rectHeight: rect.height, playing: false },
+    };
   }
 
   function wire(v: HTMLVideoElement) {
@@ -149,9 +218,23 @@ export function createDomDetector(opts: DomDetectorOptions): DomDetector {
 
   function scan(): VideoSource[] {
     const videos: HTMLVideoElement[] = [];
-    collect(doc, videos);
+    const images: HTMLImageElement[] = [];
+    collect(doc, videos, images);
     if (running) for (const v of videos) wire(v);
-    return videos.map(describe);
+    const gifs = new Map<string, VideoSource>();
+    for (const img of images) {
+      const url = gifUrlOf(img);
+      if (!url) continue;
+      // its size is known once it loads
+      if (running && !wiredImages.has(img)) {
+        wiredImages.add(img);
+        img.addEventListener("load", schedule);
+      }
+      if (gifs.has(url)) continue;
+      const gif = describeGif(img, url);
+      if (gif) gifs.set(url, gif);
+    }
+    return [...videos.map(describe), ...gifs.values()];
   }
 
   function report() {

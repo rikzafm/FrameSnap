@@ -29,6 +29,32 @@ const T3 = /^t3_/i;
 const T1 = /^t1_/i;
 // -------------------------------------------------------------------------
 
+/** A silent v.redd.it clip this short is most likely an uploaded GIF (detection only, not a length limit). */
+const GIF_LIKE_MAX_SECONDS = 60;
+const GIF_ORIGINAL_HOST = "i.redd.it";
+const GIF_PREVIEW_HOST = "preview.redd.it";
+/** New preview names put a slug before the media id: `my-title-v0-<id>.gif`. */
+const PREVIEW_SLUG_RE = /^.*-v0-/;
+
+/**
+ * The original upload behind a Reddit GIF rendition. `preview.redd.it/<id>.gif`
+ * is served as MP4 (`format=mp4`) or a still (`format=png8`) of the file kept
+ * at `i.redd.it/<id>.gif`. Other hosts (external-preview, imgur) have no
+ * derivable original.
+ */
+export function redditGifOriginal(url: string): string | undefined {
+  try {
+    const u = new URL(url);
+    const name = u.pathname.split("/").pop() ?? "";
+    if (!/\.gif$/i.test(name)) return undefined;
+    if (u.hostname === GIF_ORIGINAL_HOST) return `https://${GIF_ORIGINAL_HOST}/${name}`;
+    if (u.hostname === GIF_PREVIEW_HOST) return `https://${GIF_ORIGINAL_HOST}/${name.replace(PREVIEW_SLUG_RE, "")}`;
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const decode = (s: string) => s.replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 
 function attr(attrs: string, name: string): string | undefined {
@@ -40,10 +66,15 @@ function attr(attrs: string, name: string): string | undefined {
 const hasClass = (attrs: string, cls: string) => (attr(attrs, "class") ?? "").split(/\s+/).includes(cls);
 
 const mediaId = (url: string | undefined) => (url ? MEDIA_ID_RE.exec(url)?.[1] : undefined);
+/**
+ * The canonical manifest URL. The player's own request carries a query
+ * (`?a=…&v=1&f=sd`) that can narrow the renditions listed, and differs from
+ * what the page markup names, so every find uses the bare URL: it lists every
+ * rendition and lets network, DOM and markup finds meet on one card.
+ */
 const mpdFor = (id: string) => `https://${MEDIA_HOST}/${id}/${MPD_FILE}`;
-const postIdFromUrl = (pageUrl: string) => POST_ID_IN_URL_RE.exec(pageUrl)?.[1];
 
-function isMpd(url: string): boolean {
+function isMpdRequest(url: string): boolean {
   try {
     const u = new URL(url);
     return u.hostname === MEDIA_HOST && u.pathname.endsWith(`/${MPD_FILE}`);
@@ -51,6 +82,7 @@ function isMpd(url: string): boolean {
     return false;
   }
 }
+const postIdFromUrl = (pageUrl: string) => POST_ID_IN_URL_RE.exec(pageUrl)?.[1];
 
 function makeSource(
   id: string,
@@ -112,28 +144,30 @@ export function redditSourcesFromHtml(html: string, pageUrl: string, pageTitle: 
       const id = mediaId(attr(attrs, "src"));
       if (id) add(mpdFor(id), attr(attrs, "poster"));
     } else if (tag === "div" && hasClass(attrs, OLD_PLAYER_CLASS)) {
-      const mpd = attr(attrs, "data-mpd-url");
-      const id = mediaId(attr(attrs, "data-hls-url"));
-      if (mpd) add(mpd, undefined);
-      else if (id) add(mpdFor(id), undefined);
+      const id = mediaId(attr(attrs, "data-mpd-url")) ?? mediaId(attr(attrs, "data-hls-url"));
+      if (id) add(mpdFor(id), undefined);
     }
   }
   return out;
 }
 
+/**
+ * Sniffed and DOM finds. A page can hold several videos (a post plus comment
+ * clips), so a find is keyed by its media id, not the page's post id: the
+ * registry folds it onto the adapter's card through the shared canonical MPD URL.
+ */
 function detect(ctx: DetectContext): VideoSource[] {
   const out: VideoSource[] = [];
   const seen = new Set<string>();
-  const postId = postIdFromUrl(ctx.pageUrl);
   const push = (url: string, by: "network" | "dom", extra: Partial<VideoSource> = {}) => {
     const vid = mediaId(url);
     if (!vid) return;
-    const mpd = isMpd(url) ? url : mpdFor(vid);
+    const mpd = mpdFor(vid);
     if (seen.has(mpd)) return;
     seen.add(mpd);
-    out.push(makeSource(`reddit:${postId ?? `v-${vid}`}`, mpd, ctx.pageTitle, ctx.pageUrl, [by], extra));
+    out.push(makeSource(`reddit:v-${vid}`, mpd, ctx.pageTitle, ctx.pageUrl, [by], extra));
   };
-  for (const hit of ctx.network) if (isMpd(hit.url)) push(hit.url, "network");
+  for (const hit of ctx.network) if (isMpdRequest(hit.url)) push(hit.url, "network");
   for (const v of ctx.domVideos) {
     push(v.src, "dom", {
       ...(v.poster ? { thumbnail: v.poster } : {}),
@@ -179,8 +213,11 @@ async function resolve(src: VideoSource, ctx: AdapterContext): Promise<VideoSour
       bitrate: r.bandwidth,
       ...(r.language ? { language: r.language } : {}),
     }));
+    // Reddit turns an uploaded GIF into a silent v.redd.it clip; a short silent clip is offered as GIF too
+    const gifLike = !mpd.live && mpd.audio.length === 0 && mpd.duration !== undefined && mpd.duration <= GIF_LIKE_MAX_SECONDS;
     return {
       ...src,
+      ...(gifLike ? { animatedGif: true as const } : {}),
       ...(mpd.duration !== undefined && !mpd.live ? { duration: mpd.duration } : {}),
       protection: mpd.protection === "drm" ? "drm" : src.protection,
       variants: variants.length ? variants : src.variants,

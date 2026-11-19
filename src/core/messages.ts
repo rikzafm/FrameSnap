@@ -99,7 +99,7 @@ const isGifOptions = (x: unknown): x is GifOptions =>
   num(x.trim.start) &&
   num(x.trim.end) &&
   x.trim.end > x.trim.start &&
-  (x.fps === 10 || x.fps === 15 || x.fps === 24 || x.fps === 30) &&
+  (x.fps === 10 || x.fps === 15 || x.fps === 24 || x.fps === 30 || x.fps === "source") &&
   (x.width === 320 || x.width === 480 || x.width === 640 || x.width === "original") &&
   num(x.loop) &&
   typeof x.dither === "boolean";

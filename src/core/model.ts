@@ -7,7 +7,8 @@
 export type SiteId = "reddit" | "x" | "discord" | "youtube" | "generic";
 
 export type VariantKind = "progressive" | "hls" | "dash" | "mse-capture" | "recorder";
-export type Container = "mp4" | "webm" | "ts" | "fmp4" | "unknown";
+/** "gif": an animated GIF image on the page, saved as the original file. */
+export type Container = "mp4" | "webm" | "ts" | "fmp4" | "gif" | "unknown";
 export type DetectedBy = "dom" | "network" | "adapter";
 
 export interface Variant {
@@ -74,6 +75,17 @@ export interface VideoSource {
    * lengths differ, as they do while an ad plays.
    */
   mainVideo?: true;
+  /**
+   * The original .gif file this video is a rendition of (Reddit serves an
+   * uploaded GIF as MP4 but keeps the file). "Download GIF" saves it as is.
+   */
+  gifUrl?: string;
+  /**
+   * The site turned a GIF into this silent video and kept no .gif (X
+   * animated_gif). "Download GIF" renders the whole clip back to GIF at full
+   * width and the clip's own frame rate.
+   */
+  animatedGif?: true;
 }
 
 export interface DomFacts {
@@ -91,7 +103,9 @@ export interface DomFacts {
 
 export type VideoFormat = "mp4" | "webm" | "mkv" | "mov";
 export type AudioFormat = "mp3" | "m4a";
-export type OutputFormat = VideoFormat | AudioFormat;
+/** The original file of a GIF image, saved byte for byte. */
+export type ImageFormat = "gif";
+export type OutputFormat = VideoFormat | AudioFormat | ImageFormat;
 export type AudioMode = "keep" | "remove" | "only";
 
 export interface TrimRange {
@@ -114,7 +128,8 @@ export interface DownloadOptions {
 
 export interface GifOptions {
   trim: TrimRange;
-  fps: 10 | 15 | 24 | 30;
+  /** "source": keep every frame at the clip's own timing (no fps filter). */
+  fps: 10 | 15 | 24 | 30 | "source";
   /** px, or "original". */
   width: 320 | 480 | 640 | "original";
   /** 0 = forever. */
@@ -122,6 +137,15 @@ export interface GifOptions {
   dither: boolean;
 }
 
-export const GIF_MAX_SECONDS = 30;
+/** A source that is a GIF image on the page rather than a video: it downloads as the original .gif. */
+export function isGifImage(src: Pick<VideoSource, "variants">): boolean {
+  return src.variants.length > 0 && src.variants.every((v) => v.container === "gif");
+}
+
+/** A video that can be saved as a .gif: from its original file, or rendered from the clip. */
+export function hasGifDownload(src: Pick<VideoSource, "gifUrl" | "animatedGif" | "variants">): boolean {
+  return !isGifImage(src) && (src.gifUrl !== undefined || src.animatedGif === true);
+}
+
 export const GIF_DEFAULT_SECONDS = 2;
 export const LARGE_FILE_BYTES = 500 * 1024 * 1024;

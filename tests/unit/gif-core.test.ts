@@ -37,8 +37,9 @@ describe("default trim", () => {
 });
 
 describe("trim limits", () => {
-  it("clamps into the clip and to 30 s", () => {
-    expect(clampTrim({ start: -3, end: 100 }, 60)).toEqual({ start: 0, end: 30 });
+  it("clamps into the clip, with no upper length limit", () => {
+    expect(clampTrim({ start: -3, end: 100 }, 60)).toEqual({ start: 0, end: 60 });
+    expect(clampTrim({ start: 0, end: 600 }, 900)).toEqual({ start: 0, end: 600 });
     expect(clampTrim({ start: 50, end: 70 }, 60)).toEqual({ start: 50, end: 60 });
   });
   it("keeps a minimum length", () => {
@@ -49,8 +50,9 @@ describe("trim limits", () => {
     expect(moveHandle({ start: 1, end: 3 }, "end", 1, 60)).toEqual({ start: 1, end: 3 + GIF_TRIM_STEP });
     expect(moveHandle({ start: 1, end: 59.8 }, "end", 1, 60).end).toBe(60);
   });
-  it("pulls the other handle along rather than exceeding 30 s", () => {
-    expect(moveHandle({ start: 10, end: 40 }, "end", 1, 60)).toEqual({ start: 10 + GIF_TRIM_STEP, end: 40 + GIF_TRIM_STEP });
+  it("lets the range grow past 30 s without moving the other handle", () => {
+    expect(moveHandle({ start: 10, end: 40 }, "end", 1, 60)).toEqual({ start: 10, end: 40 + GIF_TRIM_STEP });
+    expect(moveHandle({ start: 40, end: 50 }, "start", -80, 60)).toEqual({ start: 0, end: 50 });
   });
   it("keeps the handles apart", () => {
     const t = moveHandle({ start: 4.9, end: 5 }, "start", 1, 60);
@@ -66,8 +68,8 @@ describe("pointer drags", () => {
   });
   it("cannot drag a handle past the other one or out of the clip", () => {
     expect(dragHandle({ start: 1, end: 5 }, "start", 9, 60).start).toBeCloseTo(5 - GIF_MIN_SECONDS);
-    // stops at the clip end and pulls the start along to stay within 30 s
-    expect(dragHandle({ start: 1, end: 5 }, "end", 99, 60)).toEqual({ start: 30, end: 60 });
+    // stops at the clip end; the start stays put
+    expect(dragHandle({ start: 1, end: 5 }, "end", 99, 60)).toEqual({ start: 1, end: 60 });
   });
   it("grabs the nearer handle, the end on a tie", () => {
     expect(nearestHandle({ start: 2, end: 6 }, 3)).toBe("start");

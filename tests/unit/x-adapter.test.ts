@@ -74,6 +74,13 @@ describe("x adapter", () => {
     expect(src!.id).toBe("x:1900000000000000001:16_1900000000000000001");
     expect(src!.variants).toHaveLength(1);
     expect(src!.variants[0]).toMatchObject({ kind: "progressive", container: "mp4", hasAudio: false });
+    expect(src!.animatedGif).toBe(true);
+    expect(src!.gifUrl).toBeUndefined();
+  });
+
+  it("does not mark an ordinary video as a GIF", () => {
+    const [src] = xAdapter.detect(ctx({ tapped: [fx.hlsOnlyTweet] }));
+    expect(src!.animatedGif).toBeUndefined();
   });
 
   it("offers an HLS-only tweet as a single hls variant", () => {

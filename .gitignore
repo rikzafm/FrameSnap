@@ -6,3 +6,5 @@ dist/
 coverage/
 tests/browser/__screenshots__/
 release/
+AGENTS.md
+CLAUDE.md

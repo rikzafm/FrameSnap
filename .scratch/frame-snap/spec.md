@@ -121,7 +121,7 @@ fetches must outlive it. The SW owns job records and reacts to `onCommit`/progre
 - `Variant { id, kind: progressive|hls|dash|mse-capture|recorder, url, container, videoCodec?, audioCodec?, width?, height?, bitrate?, sizeBytes?, hasAudio, acceptsRanges?, live? }`.
 - Options: `DownloadOptions { format, quality ("best" | variant id), audio: keep|remove|only, trim?, frameAccurate?, filenameTemplate }`,
   `GifOptions { trim, fps, width, loop (total plays, 0 = forever), dither }`.
-- Limits: `GIF_MAX_SECONDS = 30`, `LARGE_FILE_BYTES = 500 MB`, `CHUNKED_MIN_BYTES = 50 MB`, `ENGINE_MAX_BYTES = 1.6 GB`, `CHUNK_BYTES = 8 MB`.
+- Limits: GIFs have no length limit (the low-memory warning covers long ones), `LARGE_FILE_BYTES = 500 MB`, `CHUNKED_MIN_BYTES = 50 MB`, `ENGINE_MAX_BYTES = 1.6 GB`, `CHUNK_BYTES = 8 MB`.
 
 ---
 

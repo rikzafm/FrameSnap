@@ -102,6 +102,8 @@ function buildSource(t: TweetMedia, ctx: DetectContext, hits: Map<string, Networ
     audioTracks: [],
     protection: "none",
     detectedBy: ["network"],
+    // X keeps no .gif: the upload lives on only as this silent MP4
+    ...(isGif ? { animatedGif: true as const } : {}),
   };
 }
 

@@ -61,6 +61,59 @@ describe("dom detector", () => {
     expect(isContentToWorker({ t: "dom/report", sources: [s], frameUrl: PAGE })).toBe(true);
   });
 
+  it("reports a GIF image as a source whose one variant is the original .gif", () => {
+    document.body.innerHTML = "";
+    const img = document.createElement("img");
+    img.src = "https://cdn.test/media/dancing%20cat.gif?w=1";
+    Object.defineProperty(img, "naturalWidth", { value: 480 });
+    Object.defineProperty(img, "naturalHeight", { value: 270 });
+    img.getBoundingClientRect = () => ({ x: 0, y: 0, left: 0, top: 0, right: 480, bottom: 270, width: 480, height: 270 }) as DOMRect;
+    const twin = img.cloneNode() as HTMLImageElement;
+    Object.defineProperty(twin, "naturalWidth", { value: 480 });
+    Object.defineProperty(twin, "naturalHeight", { value: 270 });
+    const pixel = document.createElement("img");
+    pixel.src = "https://cdn.test/t.gif";
+    Object.defineProperty(pixel, "naturalWidth", { value: 1 });
+    Object.defineProperty(pixel, "naturalHeight", { value: 1 });
+    const still = document.createElement("img");
+    still.src = "https://cdn.test/photo.jpg";
+    document.body.append(img, twin, pixel, still);
+    const sources = createDomDetector({ document, frameUrl: PAGE, emit: () => {} }).scan();
+    expect(sources).toHaveLength(1);
+    const s = sources[0]!;
+    expect(s.id).toMatch(/^gif:[0-9a-f]{8}$/);
+    expect(s.title).toBe("dancing cat");
+    expect(s.frameRef).toBeUndefined();
+    expect(s.variants).toEqual([expect.objectContaining({ url: "https://cdn.test/media/dancing%20cat.gif?w=1", container: "gif", width: 480, height: 270, hasAudio: false })]);
+    expect(isContentToWorker({ t: "dom/report", sources: [s], frameUrl: PAGE })).toBe(true);
+  });
+
+  it("points a Reddit GIF played as MP4 at its original .gif", () => {
+    document.body.innerHTML = "";
+    const v = stubVideo(document.createElement("video"), { src: "https://preview.redd.it/cat-v0-abc123.gif?format=mp4&s=f00", duration: 4 });
+    document.body.append(v);
+    const s = createDomDetector({ document, frameUrl: PAGE, emit: () => {} }).scan()[0]!;
+    expect(s.gifUrl).toBe("https://i.redd.it/abc123.gif");
+    expect(s.animatedGif).toBe(true);
+    expect(s.variants[0]).toMatchObject({ container: "mp4", hasAudio: false });
+  });
+
+  it("reports a Reddit GIF's still preview as the original GIF, and ignores other stills named .gif", () => {
+    document.body.innerHTML = "";
+    const size = (img: HTMLImageElement) => {
+      Object.defineProperty(img, "naturalWidth", { value: 320 });
+      Object.defineProperty(img, "naturalHeight", { value: 240 });
+      return img;
+    };
+    const reddit = size(document.createElement("img"));
+    reddit.src = "https://preview.redd.it/abc123.gif?width=320&format=png8&s=1";
+    const other = size(document.createElement("img"));
+    other.src = "https://cdn.test/thumb.gif?format=jpg";
+    document.body.append(reddit, other);
+    const sources = createDomDetector({ document, frameUrl: PAGE, emit: () => {} }).scan();
+    expect(sources.map((s) => s.variants[0]!.url)).toEqual(["https://i.redd.it/abc123.gif"]);
+  });
+
   it("reports the page URL as it is now, after a single-page navigation", () => {
     document.body.innerHTML = "";
     document.body.append(stubVideo(document.createElement("video"), { src: "https://cdn.test/a.mp4" }));

@@ -23,7 +23,33 @@ function src(variants: Partial<Variant>[], extra: Partial<VideoSource> = {}): Vi
 
 const opts = (o: Partial<DownloadOptions> = {}): DownloadOptions => ({ format: "mp4", quality: "best", audio: "keep", filenameTemplate: "{title}", ...o });
 
+describe("GIF render at the clip's own frame rate", () => {
+  it("drops the fps filter for fps: source", () => {
+    const g = buildGifArgs({ trim: { start: 0, end: 4 }, fps: "source", width: "original", loop: 0, dither: true }, "in.mp4", "o.gif", { width: 480, height: 270 }, { start: 0, length: 4 });
+    expect(g.pass1.join(" ")).not.toContain("fps=");
+    expect(g.pass2.join(" ")).toContain("scale=480:-2:flags=lanczos[x];[x][1:v]paletteuse=dither=sierra2_4a");
+  });
+});
+
 describe("planDownload", () => {
+  it("GIF image → the original file, direct, whatever format, trim or audio was chosen", () => {
+    const gif = src([{ url: "https://c.test/cat.gif", container: "gif", hasAudio: false, width: 480, height: 270, sizeBytes: 3 * MB }], { duration: undefined });
+    const p = planDownload(gif, opts({ format: "webm", audio: "keep", trim: { start: 1, end: 2 }, frameAccurate: true }));
+    expect(p).toMatchObject({ route: "direct", needsEngine: false, video: "copy", audio: "drop", output: { format: "gif", extension: "gif", mime: "image/gif" }, estimate: { bytes: 3 * MB, confidence: "exact" } });
+    expect(p.trim).toBeUndefined();
+    expect(p.inputs[0]!.url).toBe("https://c.test/cat.gif");
+  });
+
+  it("a video with an original .gif (Reddit) saves that file as is", () => {
+    const p = planDownload(src([{ height: 360, width: 640 }], { gifUrl: "https://i.redd.it/abc.gif" }), opts({ format: "gif" }));
+    expect(p).toMatchObject({ route: "direct", needsEngine: false, output: { extension: "gif" }, height: 360 });
+    expect(p.inputs[0]!.url).toBe("https://i.redd.it/abc.gif");
+  });
+
+  it("a video cannot be saved as .gif through the download route", () => {
+    expect(() => planDownload(src([{}]), opts({ format: "gif" }))).toThrow(FrameSnapError);
+  });
+
   it("small progressive MP4 → direct, no engine, not resumable", () => {
     const p = planDownload(src([{ videoCodec: "avc1", audioCodec: "mp4a.40.2", sizeBytes: 10 * MB, acceptsRanges: true }]), opts());
     expect(p).toMatchObject({ route: "direct", needsEngine: false, resumable: false, notResumableReason: "direct", video: "copy", audio: "copy" });
