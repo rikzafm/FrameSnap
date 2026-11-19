@@ -333,13 +333,8 @@ describe("settings defaults", () => {
 });
 
 describe("first-run notice", () => {
-  it("shows the notice until acknowledged, then reports the acknowledgement", async () => {
-    const ack = vi.fn();
-    make({ firstRun: { onAcknowledge: ack } }).handle({ t: "media/updated", tabId: 5, sources: [] });
-    expect(q(".first-run")!.textContent).toContain("Only save content you have the right to use.");
-    expect(await axeViolations()).toEqual([]);
-    byText("button", "Got it")!.click();
-    expect(ack).toHaveBeenCalledOnce();
+  it("shows no use notice in the popup", () => {
+    make({ firstRun: { onAcknowledge: vi.fn() } }).handle({ t: "media/updated", tabId: 5, sources: [] });
     expect(q(".first-run")).toBeNull();
   });
 

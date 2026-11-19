@@ -31,6 +31,6 @@ Build with `npm run build`, load `dist/` unpacked. Use any site that is not Redd
 - [ ] A cross-origin video without CORS falls back to the visible-tab capture and says so.
 
 ## Options and privacy
-- [ ] First install opens Options with the use notice; the popup shows "Only save content you have the right to use" until Got it.
+- [ ] First install opens Options with the privacy summary until Got it.
 - [ ] Sites lists granted origins and Revoke removes access; Clear all removes history and partial downloads, with Undo for 8 seconds.
 - [ ] The DevTools network tab shows requests only to the video's own hosts.

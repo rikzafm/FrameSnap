@@ -95,7 +95,6 @@ describe("first run", () => {
     settings = { ...DEFAULT_SETTINGS };
     await make();
     const notice = q(".first-run")!;
-    expect(notice.textContent).toContain("Only save content you have the right to use.");
     expect(notice.textContent).toContain("7 days");
     expect(notice.textContent).toMatch(/no analytics|nothing is uploaded/i);
     byText("button", "Got it")!.click();

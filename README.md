@@ -46,7 +46,7 @@ logo into `release/store-assets/`.
 - Partial downloads are kept privately on your device for up to 7 days so they can resume, then
   deleted. Options has Clear all.
 - Permissions and why each is needed: [docs/store/permissions.md](docs/store/permissions.md).
-- Only save content you have the right to use. DRM-protected video is detected and refused.
+- DRM-protected video is detected and refused.
 
 ## Development
 

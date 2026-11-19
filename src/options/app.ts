@@ -103,7 +103,6 @@ export async function createOptions(root: HTMLElement, deps: OptionsDeps) {
     return h(
       "section",
       { class: "first-run", "aria-label": "Welcome" },
-      h("p", { class: "first-run-lead" }, "Only save content you have the right to use."),
       h(
         "ul",
         { class: "privacy" },

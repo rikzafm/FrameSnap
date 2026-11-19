@@ -570,16 +570,6 @@ export function createPopup(root: HTMLElement, deps: PopupDeps) {
     const cur = selected();
     const single = s.loaded && cur !== undefined && (s.sources.length === 1 || s.focused);
     frag.append(brand(single ? `v${deps.version ?? "1.0"} · Extension` : hostLabel()));
-    if (s.firstRun) {
-      frag.append(
-        h(
-          "section",
-          { class: "banner first-run", "aria-label": "Before you start" },
-          h("p", { class: "banner-text" }, "Only save content you have the right to use."),
-          button("Got it", () => ((s.firstRun = false), deps.firstRun?.onAcknowledge(), render()), { variant: "primary", key: "first-run-ack" }),
-        ),
-      );
-    }
     const banner = bannerView();
     if (banner) frag.append(banner);
     if (!s.loaded) frag.append(h("p", { class: "shell", role: "status" }, "Looking for videos…"));
