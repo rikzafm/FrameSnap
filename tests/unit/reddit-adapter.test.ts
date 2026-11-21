@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { redditAdapter, redditGifOriginal, redditSourcesFromHtml } from "../../src/adapters/reddit";
+import {
+  redditAdapter,
+  redditCanonicalId,
+  redditDashSource,
+  redditGifOriginal,
+  redditMediaId,
+  redditMpdUrl,
+  redditPlayerMedia,
+  redditPostContentMediaId,
+  redditSourcesFromHtml,
+} from "../../src/adapters/reddit";
 import { pickAdapter } from "../../src/adapters/registry";
 import type { AdapterContext } from "../../src/adapters/types";
 import { parseMaster, parseMedia } from "../../src/core/media/hls";
@@ -65,6 +75,40 @@ describe("reddit adapter: layouts", () => {
     expect(s!.id).toBe("reddit:c-kz9y8x");
     expect(s!.variants[0]!.url).toBe("https://v.redd.it/cmt999/DASHPlaylist.mpd");
   });
+
+  it("shreddit-video-player with src: canonical post id, title, poster, and DASH url", () => {
+    const [s] = redditSourcesFromHtml(fx.VIDEO_PLAYER_SRC_HTML, fx.VIDEO_PLAYER_SRC_URL, "tab");
+    expect(s).toMatchObject({
+      id: "reddit:4jkl89",
+      title: "New player",
+      thumbnail: "https://preview.redd.it/nvp111.png",
+    });
+    expect(s!.variants[0]!.url).toBe("https://v.redd.it/nvp111/DASHPlaylist.mpd");
+  });
+
+  it("shreddit-video-player with video-url: extracts media id and builds DASH url", () => {
+    const [s] = redditSourcesFromHtml(fx.VIDEO_PLAYER_URL_ATTR_HTML, fx.VIDEO_PLAYER_URL_ATTR_URL, "tab");
+    expect(s).toMatchObject({
+      id: "reddit:5mno01",
+      title: "Video URL attr",
+    });
+    expect(s!.variants[0]!.url).toBe("https://v.redd.it/nvp222/DASHPlaylist.mpd");
+  });
+
+  it("shreddit-post content-href: detects v.redd.it video before player mounts, without duplicating when player is present", () => {
+    const [lazy, ...extra] = redditSourcesFromHtml(fx.CONTENT_HREF_ONLY_HTML, fx.CONTENT_HREF_ONLY_URL, "tab");
+    expect(extra).toHaveLength(0);
+    expect(lazy).toMatchObject({
+      id: "reddit:6pqr23",
+      title: "Lazy post",
+    });
+    expect(lazy!.variants[0]!.url).toBe("https://v.redd.it/lazy333/DASHPlaylist.mpd");
+
+    // NEW_POST_HTML has both content-href and shreddit-player-2 for k9x2m3q4: still 1 source with poster
+    const both = redditSourcesFromHtml(fx.NEW_POST_HTML, fx.NEW_POST_URL, "tab");
+    expect(both).toHaveLength(1);
+    expect(both[0]!.thumbnail).toBe("https://preview.redd.it/k9x2m3q4.png");
+  });
 });
 
 describe("reddit adapter: detect from network log", () => {
@@ -126,6 +170,26 @@ describe("reddit adapter: detect from network log", () => {
     const merged = mergeAll(sniffed, fromHtml);
     expect(merged.map((s) => s.id)).toEqual(["reddit:1abc23"]);
   });
+
+  it("shreddit-video-player and content-href finds fold with network-sniffed manifests", () => {
+    const fromPlayer = redditSourcesFromHtml(fx.VIDEO_PLAYER_SRC_HTML, fx.VIDEO_PLAYER_SRC_URL, "t");
+    const sniffedPlayer = redditAdapter.detect({
+      pageUrl: fx.VIDEO_PLAYER_SRC_URL,
+      pageTitle: "t",
+      domVideos: [],
+      network: [{ url: "https://v.redd.it/nvp111/DASHPlaylist.mpd?f=sd" }],
+    });
+    expect(mergeAll(sniffedPlayer, fromPlayer).map((s) => s.id)).toEqual(["reddit:4jkl89"]);
+
+    const fromContentHref = redditSourcesFromHtml(fx.CONTENT_HREF_ONLY_HTML, fx.CONTENT_HREF_ONLY_URL, "t");
+    const sniffedLazy = redditAdapter.detect({
+      pageUrl: fx.CONTENT_HREF_ONLY_URL,
+      pageTitle: "t",
+      domVideos: [],
+      network: [{ url: "https://v.redd.it/lazy333/DASHPlaylist.mpd?f=sd" }],
+    });
+    expect(mergeAll(sniffedLazy, fromContentHref).map((s) => s.id)).toEqual(["reddit:6pqr23"]);
+  });
 });
 
 describe("redditGifOriginal", () => {
@@ -177,5 +241,65 @@ describe("reddit adapter: resolve", () => {
   it("returns the source unchanged when the MPD cannot be fetched", async () => {
     const src = source(fx.NEW_POST_HTML, fx.NEW_POST_URL);
     expect(await redditAdapter.resolve!(src, adapterCtx({}))).toBe(src);
+  });
+});
+
+describe("reddit adapter: exported DOM helpers", () => {
+  const el = (tagName: string, attrs: Record<string, string> = {}, classes: string[] = []) => ({
+    tagName,
+    getAttribute: (name: string) => attrs[name] ?? null,
+    classList: { contains: (cls: string) => classes.includes(cls) },
+  });
+
+  it("extracts v.redd.it media IDs and builds canonical DASHPlaylist.mpd URLs", () => {
+    expect(redditMediaId("https://v.redd.it/k9x2m3q4/HLSPlaylist.m3u8?f=hd")).toBe("k9x2m3q4");
+    expect(redditMediaId("https://v.redd.it/k9x2m3q4")).toBe("k9x2m3q4");
+    expect(redditMediaId("https://example.com/k9x2m3q4/HLSPlaylist.m3u8")).toBeUndefined();
+    expect(redditMediaId(null)).toBeUndefined();
+    expect(redditMpdUrl("k9x2m3q4")).toBe("https://v.redd.it/k9x2m3q4/DASHPlaylist.mpd");
+  });
+
+  it("derives canonical IDs for comments, posts, URL fallback, and media-ID fallback", () => {
+    expect(redditCanonicalId({ mediaId: "vid1", pageUrl: fx.COMMENT_URL, postId: "t3_3ghi67", commentId: "t1_kz9y8x" })).toBe("reddit:c-kz9y8x");
+    expect(redditCanonicalId({ mediaId: "vid1", pageUrl: fx.FEED_URL, postId: "t3_aaa111" })).toBe("reddit:aaa111");
+    expect(redditCanonicalId({ mediaId: "vid1", pageUrl: fx.NEW_POST_URL })).toBe("reddit:1abc23");
+    expect(redditCanonicalId({ mediaId: "vid1", pageUrl: fx.FEED_URL })).toBe("reddit:v-vid1");
+  });
+
+  it("constructs a canonical Reddit DASH VideoSource", () => {
+    const src = redditDashSource({
+      mediaId: "k9x2m3q4",
+      pageUrl: fx.NEW_POST_URL,
+      title: "Cat jumps",
+      postId: "t3_1abc23",
+      detectedBy: ["dom"],
+      extra: { thumbnail: "https://preview.redd.it/k9x2m3q4.png" },
+    });
+    expect(src).toMatchObject({
+      id: "reddit:1abc23",
+      site: "reddit",
+      title: "Cat jumps",
+      pageUrl: fx.NEW_POST_URL,
+      thumbnail: "https://preview.redd.it/k9x2m3q4.png",
+      detectedBy: ["dom"],
+      variants: [{ id: "dash:k9x2m3q4", kind: "dash", url: fx.MPD_CMAF_URL, container: "fmp4", hasAudio: false }],
+    });
+  });
+
+  it("recognizes new player elements (src / video-url), old player divs, and shreddit-post content-href", () => {
+    expect(redditPlayerMedia(el("SHREDDIT-VIDEO-PLAYER", { src: "https://v.redd.it/nvp111/HLSPlaylist.m3u8", poster: "https://p.jpg" }))).toEqual({
+      mediaId: "nvp111",
+      poster: "https://p.jpg",
+    });
+    expect(redditPlayerMedia(el("shreddit-video-player", { "video-url": "https://v.redd.it/nvp222/HLSPlaylist.m3u8" }))).toEqual({
+      mediaId: "nvp222",
+    });
+    expect(redditPlayerMedia(el("DIV", { "data-hls-url": "https://v.redd.it/old111/HLSPlaylist.m3u8" }, ["reddit-video-player-root"]))).toEqual({
+      mediaId: "old111",
+    });
+    expect(redditPlayerMedia(el("div", { src: "https://v.redd.it/x/DASHPlaylist.mpd" }))).toBeUndefined();
+
+    expect(redditPostContentMediaId(el("SHREDDIT-POST", { "content-href": "https://v.redd.it/lazy333" }))).toBe("lazy333");
+    expect(redditPostContentMediaId(el("shreddit-post", { "content-href": "https://i.redd.it/pic.jpg" }))).toBeUndefined();
   });
 });
