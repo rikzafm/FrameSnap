@@ -84,9 +84,9 @@ const engineLink = useOffscreen ? createEngineLink({ ensure: () => lifecycle!.en
 const localEngine = useOffscreen
   ? undefined
   : createLocalEngine({
-      createHost: async (send) => (await import("../offscreen/browser-host")).createBrowserEngineHost(send),
-      onMessage: (m) => void orchestrator.onEngineMessage(m),
-    });
+    createHost: async (send) => (await import("../offscreen/browser-host")).createBrowserEngineHost(send),
+    onMessage: (m) => void orchestrator.onEngineMessage(m),
+  });
 const activeLifecycle = lifecycle ?? localEngine!.lifecycle;
 const activeEngine = engineLink ?? localEngine!.engine;
 const history = createHistoryStore(storage.local);

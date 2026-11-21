@@ -208,9 +208,9 @@ const hostnameOf = (url: string): string | undefined => {
 };
 
 /** `runResume` could not identify the video again. */
-class NeedsPick extends Error {}
+class NeedsPick extends Error { }
 
-const isAppError =(x: unknown): x is AppError =>
+const isAppError = (x: unknown): x is AppError =>
   typeof x === "object" && x !== null && !(x instanceof Error) && typeof (x as AppError).code === "string" && typeof (x as AppError).retryable === "boolean";
 
 function downloadError(code: string | undefined): AppError {

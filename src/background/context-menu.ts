@@ -75,8 +75,8 @@ function resolveVideoSource(
     (target ? sources.find((s) => s.id === target.id && s.variants.length > 0) : undefined) ??
     (target?.frameRef
       ? sources.find(
-          (s) => s.frameRef?.frameId === frameId && s.frameRef.elementKey === target.frameRef!.elementKey && s.variants.length > 0,
-        )
+        (s) => s.frameRef?.frameId === frameId && s.frameRef.elementKey === target.frameRef!.elementKey && s.variants.length > 0,
+      )
       : undefined) ??
     (httpSrc ? sources.find((s) => s.variants.some((v) => v.url === httpSrc) || s.gifUrl === httpSrc) : undefined) ??
     (target
@@ -89,27 +89,27 @@ function resolveVideoSource(
       : undefined) ??
     (httpSrc
       ? (() => {
-          const gifUrl = redditGifOriginal(httpSrc);
-          return {
-            id: `dom:${fnv1a(httpSrc)}`,
-            site: pickAdapter(pageUrl).site,
-            title: pageTitle || "Video",
-            pageUrl,
-            variants: [
-              {
-                id: `p:${fnv1a(httpSrc)}`,
-                kind: "progressive" as const,
-                url: httpSrc,
-                container: containerFromUrl(httpSrc),
-                hasAudio: !gifUrl,
-              },
-            ],
-            audioTracks: [],
-            protection: "none" as const,
-            detectedBy: ["dom" as const],
-            ...(gifUrl ? { gifUrl, animatedGif: true as const } : {}),
-          };
-        })()
+        const gifUrl = redditGifOriginal(httpSrc);
+        return {
+          id: `dom:${fnv1a(httpSrc)}`,
+          site: pickAdapter(pageUrl).site,
+          title: pageTitle || "Video",
+          pageUrl,
+          variants: [
+            {
+              id: `p:${fnv1a(httpSrc)}`,
+              kind: "progressive" as const,
+              url: httpSrc,
+              container: containerFromUrl(httpSrc),
+              hasAudio: !gifUrl,
+            },
+          ],
+          audioTracks: [],
+          protection: "none" as const,
+          detectedBy: ["dom" as const],
+          ...(gifUrl ? { gifUrl, animatedGif: true as const } : {}),
+        };
+      })()
       : undefined) ??
     sources.find((s) => s.variants.length > 0)
   );
