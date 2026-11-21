@@ -14,11 +14,10 @@ import {
   REDDIT_OLD_THING_CLASS,
   REDDIT_OLD_TITLE_CLASS,
   redditAdapter,
-  redditDashSource,
   redditGifOriginal,
-  redditMpdUrl,
   redditPlayerMedia,
   redditPostContentMediaId,
+  upsertRedditDashSource,
 } from "../adapters/reddit";
 
 export interface DomDetectorOptions {
@@ -268,25 +267,16 @@ export function createDomDetector(opts: DomDetectorOptions): DomDetector {
     const pageTitle = doc.title || "Video";
 
     const add = (mediaId: string, ctxEl: Element, poster?: string): string => {
-      const mpdUrl = redditMpdUrl(mediaId);
-      const existing = byMpd.get(mpdUrl);
-      if (existing) {
-        if (poster && !existing.thumbnail) existing.thumbnail = poster;
-        return mpdUrl;
-      }
       const { postId, commentId, postTitle } = redditContextOf(ctxEl, doc);
-      const title = commentId ? pageTitle : (postTitle ?? pageTitle);
-      const src = redditDashSource({
+      return upsertRedditDashSource(byMpd, {
         mediaId,
         pageUrl: frameUrl,
-        title,
-        detectedBy: ["adapter"],
+        pageTitle,
+        postTitle,
         postId,
         commentId,
-        extra: poster ? { thumbnail: poster } : {},
+        poster,
       });
-      byMpd.set(mpdUrl, src);
-      return mpdUrl;
     };
 
     for (const el of elements) {
