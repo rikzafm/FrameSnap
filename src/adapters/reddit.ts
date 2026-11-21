@@ -74,10 +74,12 @@ const mediaId = (url: string | undefined) => (url ? MEDIA_ID_RE.exec(url)?.[1] :
  */
 const mpdFor = (id: string) => `https://${MEDIA_HOST}/${id}/${MPD_FILE}`;
 
-function isMpdRequest(url: string): boolean {
+const MEDIA_EXT_RE = /\.(m3u8|mpd|mp4)$/i;
+
+function isMediaRequest(url: string): boolean {
   try {
     const u = new URL(url);
-    return u.hostname === MEDIA_HOST && u.pathname.endsWith(`/${MPD_FILE}`);
+    return u.hostname === MEDIA_HOST && MEDIA_EXT_RE.test(u.pathname);
   } catch {
     return false;
   }
@@ -167,7 +169,7 @@ function detect(ctx: DetectContext): VideoSource[] {
     seen.add(mpd);
     out.push(makeSource(`reddit:v-${vid}`, mpd, ctx.pageTitle, ctx.pageUrl, [by], extra));
   };
-  for (const hit of ctx.network) if (isMpdRequest(hit.url)) push(hit.url, "network");
+  for (const hit of ctx.network) if (isMediaRequest(hit.url)) push(hit.url, "network");
   for (const v of ctx.domVideos) {
     push(v.src, "dom", {
       ...(v.poster ? { thumbnail: v.poster } : {}),

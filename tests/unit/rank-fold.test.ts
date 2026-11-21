@@ -68,4 +68,26 @@ describe("foldCaptureDuplicates", () => {
   it("without the main-video mark, a length mismatch still leaves both", () => {
     expect(foldCaptureDuplicates([element({ duration: 15 }), adapter()])).toHaveLength(2);
   });
+
+  it("folds a site-specific network find with a duration-matching capture-only element", () => {
+    const redditPage = "https://www.reddit.com/r/videos/comments/1abc23/cat/";
+    const net = adapter({
+      id: "reddit:v-k9x2m3q4",
+      site: "reddit",
+      pageUrl: redditPage,
+      duration: 12.1,
+      detectedBy: ["network"],
+      variants: [{ id: "dash:k9x2m3q4", kind: "dash", url: "https://v.redd.it/k9x2m3q4/DASHPlaylist.mpd", container: "fmp4", hasAudio: false }],
+    });
+    const rec = element({ pageUrl: redditPage, duration: 12 });
+    const out = rankSources([rec, net]);
+    expect(out.map((s) => s.id)).toEqual(["reddit:v-k9x2m3q4"]);
+    expect(out[0]!.dom).toEqual(dom);
+    expect(out[0]!.frameRef).toEqual({ frameId: 0, elementKey: "e1" });
+  });
+
+  it("does not fold a generic network find with a capture-only element", () => {
+    const net = adapter({ id: "net:1", site: "generic", detectedBy: ["network"] });
+    expect(foldCaptureDuplicates([element(), net])).toHaveLength(2);
+  });
 });
