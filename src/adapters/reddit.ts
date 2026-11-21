@@ -18,13 +18,17 @@ const MEDIA_ID_RE = /^https?:\/\/v\.redd\.it\/([^/?#]+)/i;
 const MPD_FILE = "DASHPlaylist.mpd";
 const POST_ID_IN_URL_RE = /\/comments\/([a-z0-9]+)/i;
 /** New layout: custom elements (their shadow content must be serialized in). */
-const NEW_POST_TAG = "shreddit-post";
-const NEW_COMMENT_TAG = "shreddit-comment";
-const NEW_PLAYER_TAGS = new Set(["shreddit-player", "shreddit-player-2"]);
+export const REDDIT_NEW_POST_TAG = "shreddit-post";
+export const REDDIT_NEW_COMMENT_TAG = "shreddit-comment";
+export const REDDIT_NEW_PLAYER_TAGS: ReadonlySet<string> = new Set([
+  "shreddit-player",
+  "shreddit-player-2",
+  "shreddit-video-player",
+]);
 /** Old layout. */
-const OLD_THING_CLASS = "thing";
-const OLD_PLAYER_CLASS = "reddit-video-player-root";
-const OLD_TITLE_CLASS = "title";
+export const REDDIT_OLD_THING_CLASS = "thing";
+export const REDDIT_OLD_PLAYER_CLASS = "reddit-video-player-root";
+export const REDDIT_OLD_TITLE_CLASS = "title";
 const T3 = /^t3_/i;
 const T1 = /^t1_/i;
 // -------------------------------------------------------------------------
@@ -65,14 +69,16 @@ function attr(attrs: string, name: string): string | undefined {
 
 const hasClass = (attrs: string, cls: string) => (attr(attrs, "class") ?? "").split(/\s+/).includes(cls);
 
-const mediaId = (url: string | undefined) => (url ? MEDIA_ID_RE.exec(url)?.[1] : undefined);
+/** Extract the `v.redd.it` media ID from a media or manifest URL. */
+export const redditMediaId = (url: string | null | undefined): string | undefined => (url ? MEDIA_ID_RE.exec(url)?.[1] : undefined);
+
 /**
  * The canonical manifest URL. The player's own request carries a query
  * (`?a=…&v=1&f=sd`) that can narrow the renditions listed, and differs from
  * what the page markup names, so every find uses the bare URL: it lists every
  * rendition and lets network, DOM and markup finds meet on one card.
  */
-const mpdFor = (id: string) => `https://${MEDIA_HOST}/${id}/${MPD_FILE}`;
+export const redditMpdUrl = (id: string): string => `https://${MEDIA_HOST}/${id}/${MPD_FILE}`;
 
 function isMpdRequest(url: string): boolean {
   try {
@@ -84,6 +90,33 @@ function isMpdRequest(url: string): boolean {
 }
 const postIdFromUrl = (pageUrl: string) => POST_ID_IN_URL_RE.exec(pageUrl)?.[1];
 
+export interface RedditCanonicalIdOptions {
+  mediaId: string;
+  pageUrl: string;
+  postId?: string;
+  commentId?: string;
+}
+
+/** Derive the canonical source ID for a Reddit post, comment, URL, or media ID. */
+export function redditCanonicalId({ mediaId, pageUrl, postId, commentId }: RedditCanonicalIdOptions): string {
+  const cleanComment = commentId?.replace(T1, "");
+  if (cleanComment) return `reddit:c-${cleanComment}`;
+  const cleanPost = postId?.replace(T3, "");
+  if (cleanPost) return `reddit:${cleanPost}`;
+  const urlPost = postIdFromUrl(pageUrl);
+  return `reddit:${urlPost ?? `v-${mediaId}`}`;
+}
+
+export interface RedditDashSourceOptions {
+  mediaId: string;
+  pageUrl: string;
+  title: string;
+  detectedBy: VideoSource["detectedBy"];
+  postId?: string;
+  commentId?: string;
+  extra?: Partial<VideoSource>;
+}
+
 function makeSource(
   id: string,
   mpdUrl: string,
@@ -93,13 +126,46 @@ function makeSource(
   extra: Partial<VideoSource> = {},
 ): VideoSource {
   const variant: Variant = {
-    id: `dash:${mediaId(mpdUrl) ?? id}`,
+    id: `dash:${redditMediaId(mpdUrl) ?? id}`,
     kind: "dash",
     url: mpdUrl,
     container: "fmp4",
     hasAudio: false,
   };
   return { id, site: "reddit", title, pageUrl, variants: [variant], audioTracks: [], protection: "none", detectedBy, ...extra };
+}
+
+/** Construct a canonical Reddit DASH `VideoSource` from a `v.redd.it` media ID and context. */
+export function redditDashSource({ mediaId, pageUrl, title, detectedBy, postId, commentId, extra }: RedditDashSourceOptions): VideoSource {
+  return makeSource(redditCanonicalId({ mediaId, pageUrl, postId, commentId }), redditMpdUrl(mediaId), title, pageUrl, detectedBy, extra);
+}
+
+export interface RedditElementLike {
+  tagName: string;
+  getAttribute(name: string): string | null;
+  classList?: { contains(token: string): boolean };
+}
+
+/** Extract `v.redd.it` media ID (and optional poster) from a recognized Reddit player element. */
+export function redditPlayerMedia(el: RedditElementLike): { mediaId: string; poster?: string } | undefined {
+  const tag = el.tagName.toLowerCase();
+  if (REDDIT_NEW_PLAYER_TAGS.has(tag)) {
+    const id = redditMediaId(el.getAttribute("src")) ?? redditMediaId(el.getAttribute("video-url"));
+    if (!id) return undefined;
+    const poster = el.getAttribute("poster") ?? undefined;
+    return poster ? { mediaId: id, poster } : { mediaId: id };
+  }
+  if (tag === "div" && el.classList?.contains(REDDIT_OLD_PLAYER_CLASS)) {
+    const id = redditMediaId(el.getAttribute("data-mpd-url")) ?? redditMediaId(el.getAttribute("data-hls-url"));
+    return id ? { mediaId: id } : undefined;
+  }
+  return undefined;
+}
+
+/** Extract `v.redd.it` media ID from a `<shreddit-post>` element's `content-href` attribute. */
+export function redditPostContentMediaId(el: RedditElementLike): string | undefined {
+  if (el.tagName.toLowerCase() !== REDDIT_NEW_POST_TAG) return undefined;
+  return redditMediaId(el.getAttribute("content-href"));
 }
 
 /**
@@ -109,18 +175,30 @@ function makeSource(
  */
 export function redditSourcesFromHtml(html: string, pageUrl: string, pageTitle: string): VideoSource[] {
   const out: VideoSource[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, VideoSource>();
   let post: { id?: string; title?: string } = {};
   let commentId: string | undefined;
   let awaitingOldTitle = false;
 
-  const add = (mpdUrl: string, poster: string | undefined) => {
-    if (seen.has(mpdUrl)) return;
-    seen.add(mpdUrl);
-    const vid = mediaId(mpdUrl) ?? mpdUrl;
-    const id = commentId ? `reddit:c-${commentId}` : post.id ? `reddit:${post.id}` : `reddit:${postIdFromUrl(pageUrl) ?? `v-${vid}`}`;
+  const add = (vid: string, poster: string | undefined) => {
+    const mpdUrl = redditMpdUrl(vid);
+    const existing = seen.get(mpdUrl);
+    if (existing) {
+      if (poster && !existing.thumbnail) existing.thumbnail = poster;
+      return;
+    }
     const title = commentId ? pageTitle : (post.title ?? pageTitle);
-    out.push(makeSource(id, mpdUrl, title, pageUrl, ["adapter"], poster ? { thumbnail: poster } : {}));
+    const src = redditDashSource({
+      mediaId: vid,
+      pageUrl,
+      title,
+      detectedBy: ["adapter"],
+      postId: post.id,
+      commentId,
+      extra: poster ? { thumbnail: poster } : {},
+    });
+    seen.set(mpdUrl, src);
+    out.push(src);
   };
 
   const tagRe = /<([a-z][a-z0-9-]*)\b([^>]*)>([^<]*)/gi;
@@ -128,24 +206,26 @@ export function redditSourcesFromHtml(html: string, pageUrl: string, pageTitle: 
     const tag = m[1]!.toLowerCase();
     const attrs = m[2] ?? "";
     const text = decode((m[3] ?? "").trim());
-    if (tag === NEW_POST_TAG) {
+    if (tag === REDDIT_NEW_POST_TAG) {
       post = { id: attr(attrs, "id")?.replace(T3, ""), title: attr(attrs, "post-title") };
       commentId = undefined;
-    } else if (tag === "div" && hasClass(attrs, OLD_THING_CLASS) && /^t3_/i.test(attr(attrs, "data-fullname") ?? "")) {
+      const contentId = redditMediaId(attr(attrs, "content-href"));
+      if (contentId) add(contentId, undefined);
+    } else if (tag === "div" && hasClass(attrs, REDDIT_OLD_THING_CLASS) && /^t3_/i.test(attr(attrs, "data-fullname") ?? "")) {
       post = { id: attr(attrs, "data-fullname")!.replace(T3, "") };
       commentId = undefined;
       awaitingOldTitle = true;
-    } else if (tag === NEW_COMMENT_TAG) {
+    } else if (tag === REDDIT_NEW_COMMENT_TAG) {
       commentId = attr(attrs, "thingid")?.replace(T1, "");
-    } else if (tag === "a" && awaitingOldTitle && hasClass(attrs, OLD_TITLE_CLASS)) {
+    } else if (tag === "a" && awaitingOldTitle && hasClass(attrs, REDDIT_OLD_TITLE_CLASS)) {
       if (text) post.title = text;
       awaitingOldTitle = false;
-    } else if (NEW_PLAYER_TAGS.has(tag)) {
-      const id = mediaId(attr(attrs, "src"));
-      if (id) add(mpdFor(id), attr(attrs, "poster"));
-    } else if (tag === "div" && hasClass(attrs, OLD_PLAYER_CLASS)) {
-      const id = mediaId(attr(attrs, "data-mpd-url")) ?? mediaId(attr(attrs, "data-hls-url"));
-      if (id) add(mpdFor(id), undefined);
+    } else if (REDDIT_NEW_PLAYER_TAGS.has(tag)) {
+      const id = redditMediaId(attr(attrs, "src")) ?? redditMediaId(attr(attrs, "video-url"));
+      if (id) add(id, attr(attrs, "poster"));
+    } else if (tag === "div" && hasClass(attrs, REDDIT_OLD_PLAYER_CLASS)) {
+      const id = redditMediaId(attr(attrs, "data-mpd-url")) ?? redditMediaId(attr(attrs, "data-hls-url"));
+      if (id) add(id, undefined);
     }
   }
   return out;
@@ -160,9 +240,9 @@ function detect(ctx: DetectContext): VideoSource[] {
   const out: VideoSource[] = [];
   const seen = new Set<string>();
   const push = (url: string, by: "network" | "dom", extra: Partial<VideoSource> = {}) => {
-    const vid = mediaId(url);
+    const vid = redditMediaId(url);
     if (!vid) return;
-    const mpd = mpdFor(vid);
+    const mpd = redditMpdUrl(vid);
     if (seen.has(mpd)) return;
     seen.add(mpd);
     out.push(makeSource(`reddit:v-${vid}`, mpd, ctx.pageTitle, ctx.pageUrl, [by], extra));

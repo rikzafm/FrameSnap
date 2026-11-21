@@ -32,6 +32,22 @@ export const COMMENT_HTML = `
   <shreddit-player src="https://v.redd.it/cmt999/HLSPlaylist.m3u8"></shreddit-player>
 </shreddit-comment>`;
 
+export const VIDEO_PLAYER_SRC_URL = "https://www.reddit.com/r/videos/comments/4jkl89/new_player/";
+export const VIDEO_PLAYER_SRC_HTML = `
+<shreddit-post id="t3_4jkl89" post-title="New player" post-type="video">
+  <shreddit-video-player src="https://v.redd.it/nvp111/HLSPlaylist.m3u8" poster="https://preview.redd.it/nvp111.png"></shreddit-video-player>
+</shreddit-post>`;
+
+export const VIDEO_PLAYER_URL_ATTR_URL = "https://www.reddit.com/r/videos/comments/5mno01/video_url_attr/";
+export const VIDEO_PLAYER_URL_ATTR_HTML = `
+<shreddit-post id="t3_5mno01" post-title="Video URL attr" post-type="video">
+  <shreddit-video-player video-url="https://v.redd.it/nvp222/HLSPlaylist.m3u8"></shreddit-video-player>
+</shreddit-post>`;
+
+export const CONTENT_HREF_ONLY_URL = "https://www.reddit.com/r/videos/comments/6pqr23/lazy_post/";
+export const CONTENT_HREF_ONLY_HTML = `
+<shreddit-post id="t3_6pqr23" post-title="Lazy post" post-type="video" content-href="https://v.redd.it/lazy333"></shreddit-post>`;
+
 const base = (id: string) => `https://v.redd.it/${id}/`;
 
 /** New CMAF names, with audio. */
