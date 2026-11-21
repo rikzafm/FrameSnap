@@ -125,6 +125,35 @@ describe("reddit adapter: detect from network log", () => {
     expect(found[0]!.variants[0]!.url).toBe(fx.MPD_CMAF_URL);
   });
 
+  it("normalizes HLS playlists and CMAF/DASH MP4 segments on v.redd.it to canonical DASHPlaylist.mpd and deduplicates", () => {
+    const found = redditAdapter.detect({
+      pageUrl: fx.NEW_POST_URL,
+      pageTitle: "Cat jumps : r/videos",
+      domVideos: [],
+      network: [
+        { url: "https://v.redd.it/k9x2m3q4/HLSPlaylist.m3u8?a=123" },
+        { url: "https://v.redd.it/k9x2m3q4/HLS_720.m3u8" },
+        { url: "https://v.redd.it/k9x2m3q4/CMAF_720.mp4" },
+        { url: "https://v.redd.it/other123/DASH_480.mp4" },
+        { url: "https://example.com/other/HLSPlaylist.m3u8" },
+        { url: "https://v.redd.it/k9x2m3q4/thumb.jpg" },
+      ],
+    });
+    expect(found).toHaveLength(2);
+    expect(found[0]).toMatchObject({
+      id: "reddit:v-k9x2m3q4",
+      site: "reddit",
+      detectedBy: ["network"],
+      variants: [{ kind: "dash", url: "https://v.redd.it/k9x2m3q4/DASHPlaylist.mpd" }],
+    });
+    expect(found[1]).toMatchObject({
+      id: "reddit:v-other123",
+      site: "reddit",
+      detectedBy: ["network"],
+      variants: [{ kind: "dash", url: "https://v.redd.it/other123/DASHPlaylist.mpd" }],
+    });
+  });
+
   it("several videos on one comment page stay separate cards", () => {
     const found = redditAdapter.detect({
       pageUrl: fx.COMMENT_URL,

@@ -30,9 +30,11 @@ const isCapture = (v: Variant) => v.kind === "mse-capture" || v.kind === "record
 export function foldCaptureDuplicates(sources: readonly VideoSource[]): VideoSource[] {
   const captureOnly = (s: VideoSource) => !!s.dom && s.variants.length > 0 && s.variants.every(isCapture);
   const area = (s: VideoSource) => (s.dom ? s.dom.rectWidth * s.dom.rectHeight * s.dom.visibleRatio : 0);
+  const fromSite = (s: VideoSource) =>
+    s.detectedBy.includes("adapter") || (s.site !== "generic" && s.detectedBy.includes("network"));
   const downloadable = (s: VideoSource, cap: VideoSource) =>
     s !== cap &&
-    s.detectedBy.includes("adapter") &&
+    fromSite(s) &&
     s.pageUrl === cap.pageUrl &&
     s.variants.length > 0 &&
     !s.variants.some(isCapture);
