@@ -228,3 +228,205 @@ describe("manifest", () => {
     expect(cs.match_origin_as_fallback).toBe(true);
   });
 });
+
+describe("reddit dom detection", () => {
+  it("claims shadow-DOM blob <video> inside shreddit-player-2 and emits one canonical DASH source", () => {
+    const post = document.createElement("shreddit-post");
+    post.setAttribute("id", "t3_1abc23");
+    post.setAttribute("post-title", "Cat jumps");
+    const player = document.createElement("shreddit-player-2");
+    player.setAttribute("src", "https://v.redd.it/k9x2m3q4/HLSPlaylist.m3u8?f=hd");
+    player.setAttribute("poster", "https://preview.redd.it/k9x2m3q4.png");
+    const shadow = player.attachShadow({ mode: "open" });
+    const v = stubVideo(document.createElement("video"), { src: "blob:https://www.reddit.com/aa11", duration: 12 });
+    v.currentTime = 3.5;
+    shadow.append(v);
+    post.append(player);
+    document.body.append(post);
+
+    const d = createDomDetector({
+      document,
+      frameUrl: "https://www.reddit.com/r/videos/comments/1abc23/cat_jumps/",
+      emit: () => {},
+    });
+    const sources = d.scan();
+    expect(sources).toHaveLength(1);
+    const s = sources[0]!;
+    expect(s.id).toBe("reddit:1abc23");
+    expect(s.site).toBe("reddit");
+    expect(s.title).toBe("Cat jumps");
+    expect(s.detectedBy).toEqual(["adapter"]);
+    expect(s.thumbnail).toBe("https://preview.redd.it/k9x2m3q4.png");
+    expect(s.duration).toBe(12);
+    expect(s.dom).toMatchObject({ rectWidth: 320, rectHeight: 180, playing: false, currentTime: 3.5 });
+    expect(s.frameRef?.elementKey).toBeTruthy();
+    expect(d.resolve(s.frameRef!.elementKey)).toBe(v);
+    expect(s.variants).toEqual([
+      expect.objectContaining({
+        kind: "dash",
+        url: "https://v.redd.it/k9x2m3q4/DASHPlaylist.mpd",
+      }),
+    ]);
+  });
+
+  it("recognizes shreddit-player and shreddit-video-player (src or video-url) and falls back to <video> poster", () => {
+    const post1 = document.createElement("shreddit-post");
+    post1.setAttribute("id", "t3_aaa111");
+    post1.setAttribute("post-title", "First clip");
+    const p1 = document.createElement("shreddit-player");
+    p1.setAttribute("src", "https://v.redd.it/vid111/HLSPlaylist.m3u8");
+    const v1 = stubVideo(document.createElement("video"), { src: "blob:https://www.reddit.com/111", duration: 5 });
+    v1.poster = "https://cdn.test/fallback-poster.jpg";
+    p1.attachShadow({ mode: "open" }).append(v1);
+    post1.append(p1);
+
+    const post2 = document.createElement("shreddit-post");
+    post2.setAttribute("id", "t3_bbb222");
+    post2.setAttribute("post-title", "Second clip");
+    const p2 = document.createElement("shreddit-video-player");
+    p2.setAttribute("video-url", "https://v.redd.it/vid222/HLSPlaylist.m3u8");
+    const v2 = stubVideo(document.createElement("video"), { src: "blob:https://www.reddit.com/222", duration: 8 });
+    p2.attachShadow({ mode: "open" }).append(v2);
+    post2.append(p2);
+
+    document.body.append(post1, post2);
+
+    const sources = createDomDetector({
+      document,
+      frameUrl: "https://www.reddit.com/r/videos/",
+      emit: () => {},
+    }).scan();
+
+    expect(sources).toHaveLength(2);
+    expect(sources[0]).toMatchObject({
+      id: "reddit:aaa111",
+      site: "reddit",
+      title: "First clip",
+      thumbnail: "https://cdn.test/fallback-poster.jpg",
+      duration: 5,
+      detectedBy: ["adapter"],
+    });
+    expect(sources[1]).toMatchObject({
+      id: "reddit:bbb222",
+      site: "reddit",
+      title: "Second clip",
+      duration: 8,
+      detectedBy: ["adapter"],
+    });
+    expect(sources[1]!.variants[0]?.url).toBe("https://v.redd.it/vid222/DASHPlaylist.mpd");
+  });
+
+  it("detects early shreddit-post content-href before a player child mounts", () => {
+    const post = document.createElement("shreddit-post");
+    post.setAttribute("id", "t3_6pqr23");
+    post.setAttribute("post-title", "Lazy post");
+    post.setAttribute("content-href", "https://v.redd.it/lazy333");
+    document.body.append(post);
+
+    const sources = createDomDetector({
+      document,
+      frameUrl: "https://www.reddit.com/r/videos/comments/6pqr23/lazy_post/",
+      emit: () => {},
+    }).scan();
+
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toMatchObject({
+      id: "reddit:6pqr23",
+      site: "reddit",
+      title: "Lazy post",
+      detectedBy: ["adapter"],
+      variants: [expect.objectContaining({ kind: "dash", url: "https://v.redd.it/lazy333/DASHPlaylist.mpd" })],
+    });
+  });
+
+  it("detects comment videos inside shreddit-comment with reddit:c-<id> and suppresses inner blob duplicate", () => {
+    const post = document.createElement("shreddit-post");
+    post.setAttribute("id", "t3_3ghi67");
+    post.setAttribute("post-title", "Text post");
+    const comment = document.createElement("shreddit-comment");
+    comment.setAttribute("thingid", "t1_kz9y8x");
+    const player = document.createElement("shreddit-player");
+    player.setAttribute("src", "https://v.redd.it/cmt999/HLSPlaylist.m3u8");
+    const v = stubVideo(document.createElement("video"), { src: "blob:https://www.reddit.com/c1", duration: 4 });
+    player.attachShadow({ mode: "open" }).append(v);
+    comment.append(player);
+    document.body.append(post, comment);
+
+    const sources = createDomDetector({
+      document,
+      frameUrl: "https://www.reddit.com/r/videos/comments/3ghi67/text_post/",
+      emit: () => {},
+    }).scan();
+
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toMatchObject({
+      id: "reddit:c-kz9y8x",
+      site: "reddit",
+      detectedBy: ["adapter"],
+      duration: 4,
+      variants: [expect.objectContaining({ kind: "dash", url: "https://v.redd.it/cmt999/DASHPlaylist.mpd" })],
+    });
+    expect(sources[0]!.frameRef?.elementKey).toBeTruthy();
+  });
+
+  it("detects old Reddit .reddit-video-player-root inside .thing and suppresses inner blob duplicate", () => {
+    const thing = document.createElement("div");
+    thing.className = "thing link";
+    thing.setAttribute("data-fullname", "t3_2def45");
+    const titleP = document.createElement("p");
+    titleP.className = "title";
+    const titleA = document.createElement("a");
+    titleA.className = "title may-blank";
+    titleA.textContent = "Dog swims";
+    titleP.append(titleA);
+
+    const player = document.createElement("div");
+    player.className = "reddit-video-player-root";
+    player.setAttribute("data-hls-url", "https://v.redd.it/p7q8r9s0/HLSPlaylist.m3u8");
+    player.setAttribute("data-mpd-url", "https://v.redd.it/p7q8r9s0/DASHPlaylist.mpd?a=1&v=1");
+    const v = stubVideo(document.createElement("video"), { src: "blob:https://old.reddit.com/old1", duration: 9 });
+    player.append(v);
+    thing.append(titleP, player);
+    document.body.append(thing);
+
+    const sources = createDomDetector({
+      document,
+      frameUrl: "https://old.reddit.com/r/videos/comments/2def45/dog_swims/",
+      emit: () => {},
+    }).scan();
+
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toMatchObject({
+      id: "reddit:2def45",
+      site: "reddit",
+      title: "Dog swims",
+      detectedBy: ["adapter"],
+      duration: 9,
+      variants: [expect.objectContaining({ kind: "dash", url: "https://v.redd.it/p7q8r9s0/DASHPlaylist.mpd" })],
+    });
+    expect(sources[0]!.frameRef?.elementKey).toBeTruthy();
+  });
+
+  it("does not run Reddit element extraction on non-Reddit pages", () => {
+    const post = document.createElement("shreddit-post");
+    post.setAttribute("id", "t3_1abc23");
+    post.setAttribute("post-title", "Cat jumps");
+    const player = document.createElement("shreddit-player-2");
+    player.setAttribute("src", "https://v.redd.it/k9x2m3q4/HLSPlaylist.m3u8");
+    const v = stubVideo(document.createElement("video"), { src: "blob:https://page.test/aa11", duration: 12 });
+    player.attachShadow({ mode: "open" }).append(v);
+    post.append(player);
+    document.body.append(post);
+
+    const sources = createDomDetector({
+      document,
+      frameUrl: PAGE,
+      emit: () => {},
+    }).scan();
+
+    expect(sources).toHaveLength(1);
+    expect(sources[0]!.id).toMatch(/^dom:[0-9a-f]{8}$/);
+    expect(sources[0]!.site).toBe("generic");
+    expect(sources[0]!.detectedBy).toEqual(["dom"]);
+  });
+});

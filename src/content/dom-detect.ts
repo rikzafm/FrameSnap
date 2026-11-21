@@ -8,7 +8,18 @@
  */
 import { fnv1a } from "../core/jobs/chunks";
 import type { Container, DomFacts, Variant, VideoSource } from "../core/model";
-import { redditGifOriginal } from "../adapters/reddit";
+import {
+  REDDIT_NEW_COMMENT_TAG,
+  REDDIT_NEW_POST_TAG,
+  REDDIT_OLD_THING_CLASS,
+  REDDIT_OLD_TITLE_CLASS,
+  redditAdapter,
+  redditDashSource,
+  redditGifOriginal,
+  redditMpdUrl,
+  redditPlayerMedia,
+  redditPostContentMediaId,
+} from "../adapters/reddit";
 
 export interface DomDetectorOptions {
   document: Document;
@@ -85,6 +96,47 @@ function visibleRatio(r: { left: number; top: number; right: number; bottom: num
   return w > 0 && h > 0 ? (w * h) / area : 0;
 }
 
+function domFactsOf(v: HTMLVideoElement, win: Window | null): DomFacts {
+  const rect = v.getBoundingClientRect();
+  return {
+    visibleRatio: visibleRatio(rect, win),
+    rectWidth: rect.width,
+    rectHeight: rect.height,
+    playing: !v.paused && !v.ended && v.readyState > 2,
+    currentTime: v.currentTime,
+  };
+}
+
+function parentElementAcrossShadow(el: Element, doc: Document): Element | null {
+  if (el.parentElement) return el.parentElement;
+  const root = el.getRootNode();
+  const ShadowRootCtor = doc.defaultView?.ShadowRoot ?? (typeof ShadowRoot !== "undefined" ? ShadowRoot : undefined);
+  return ShadowRootCtor && root instanceof ShadowRootCtor ? root.host : null;
+}
+
+function redditContextOf(el: Element, doc: Document): { postId?: string; commentId?: string; postTitle?: string } {
+  let postId: string | undefined;
+  let commentId: string | undefined;
+  let postTitle: string | undefined;
+  for (let cur: Element | null = el; cur; cur = parentElementAcrossShadow(cur, doc)) {
+    const tag = cur.tagName.toLowerCase();
+    if (tag === REDDIT_NEW_COMMENT_TAG) {
+      commentId ??= cur.getAttribute("thingid") ?? undefined;
+    } else if (tag === REDDIT_NEW_POST_TAG) {
+      postId ??= cur.getAttribute("id") ?? undefined;
+      postTitle ??= cur.getAttribute("post-title") ?? undefined;
+    } else if (tag === "div" && cur.classList.contains(REDDIT_OLD_THING_CLASS)) {
+      const fullname = cur.getAttribute("data-fullname") ?? "";
+      if (/^t3_/i.test(fullname)) {
+        postId ??= fullname;
+        const titleText = cur.querySelector(`a.${REDDIT_OLD_TITLE_CLASS}`)?.textContent?.trim();
+        if (titleText) postTitle ??= titleText;
+      }
+    }
+  }
+  return { postId, commentId, postTitle };
+}
+
 function thumbnailOf(v: HTMLVideoElement): string | undefined {
   if (v.poster) return v.poster;
   if (v.readyState < 2 || !v.videoWidth || !v.videoHeight) return undefined;
@@ -125,29 +177,23 @@ export function createDomDetector(opts: DomDetectorOptions): DomDetector {
     return k;
   };
 
-  function collect(root: Document | ShadowRoot, out: HTMLVideoElement[], images: HTMLImageElement[]) {
+  function collect(root: Document | ShadowRoot, out: HTMLVideoElement[], images: HTMLImageElement[], elements?: Element[]) {
     if (running && !observedRoots.has(root)) {
       observedRoots.add(root);
       observer?.observe(root, { childList: true, subtree: true });
     }
     for (const el of root.querySelectorAll("*")) {
+      elements?.push(el);
       if (el instanceof (doc.defaultView?.HTMLVideoElement ?? HTMLVideoElement)) out.push(el);
       else if (el instanceof (doc.defaultView?.HTMLImageElement ?? HTMLImageElement)) images.push(el);
-      if (el.shadowRoot) collect(el.shadowRoot, out, images);
+      if (el.shadowRoot) collect(el.shadowRoot, out, images, elements);
     }
   }
 
   function describe(v: HTMLVideoElement): VideoSource {
     const elementKey = keyOf(v);
     const src = v.currentSrc || v.src || "";
-    const rect = v.getBoundingClientRect();
-    const dom: DomFacts = {
-      visibleRatio: visibleRatio(rect, doc.defaultView),
-      rectWidth: rect.width,
-      rectHeight: rect.height,
-      playing: !v.paused && !v.ended && v.readyState > 2,
-      currentTime: v.currentTime,
-    };
+    const dom = domFactsOf(v, doc.defaultView);
     const variants: Variant[] = [];
     if (/^https?:/i.test(src)) {
       variants.push({
@@ -216,10 +262,70 @@ export function createDomDetector(opts: DomDetectorOptions): DomDetector {
     for (const ev of MEDIA_EVENTS) v.addEventListener(ev, schedule);
   }
 
+  function scanReddit(elements: Element[], videos: HTMLVideoElement[], frameUrl: string): { sources: VideoSource[]; owned: Set<HTMLVideoElement> } {
+    const byMpd = new Map<string, VideoSource>();
+    const playerMpd = new Map<Element, string>();
+    const pageTitle = doc.title || "Video";
+
+    const add = (mediaId: string, ctxEl: Element, poster?: string): string => {
+      const mpdUrl = redditMpdUrl(mediaId);
+      const existing = byMpd.get(mpdUrl);
+      if (existing) {
+        if (poster && !existing.thumbnail) existing.thumbnail = poster;
+        return mpdUrl;
+      }
+      const { postId, commentId, postTitle } = redditContextOf(ctxEl, doc);
+      const title = commentId ? pageTitle : (postTitle ?? pageTitle);
+      const src = redditDashSource({
+        mediaId,
+        pageUrl: frameUrl,
+        title,
+        detectedBy: ["adapter"],
+        postId,
+        commentId,
+        extra: poster ? { thumbnail: poster } : {},
+      });
+      byMpd.set(mpdUrl, src);
+      return mpdUrl;
+    };
+
+    for (const el of elements) {
+      const contentMediaId = redditPostContentMediaId(el);
+      if (contentMediaId) add(contentMediaId, el);
+      const player = redditPlayerMedia(el);
+      if (player) playerMpd.set(el, add(player.mediaId, el, player.poster));
+    }
+
+    const owned = new Set<HTMLVideoElement>();
+    for (const v of videos) {
+      for (let cur: Element | null = v; cur; cur = parentElementAcrossShadow(cur, doc)) {
+        const mpdUrl = playerMpd.get(cur);
+        if (!mpdUrl) continue;
+        owned.add(v);
+        const src = byMpd.get(mpdUrl)!;
+        if (!src.frameRef) {
+          src.frameRef = { frameId: 0, elementKey: keyOf(v) };
+          src.dom = domFactsOf(v, doc.defaultView);
+          if (Number.isFinite(v.duration) && v.duration > 0) src.duration = v.duration;
+          if (!src.thumbnail) {
+            const thumb = thumbnailOf(v);
+            if (thumb) src.thumbnail = thumb;
+          }
+          if (v.mediaKeys) src.protection = "drm";
+        }
+        break;
+      }
+    }
+    return { sources: [...byMpd.values()], owned };
+  }
+
   function scan(): VideoSource[] {
+    const frameUrl = urlOf();
+    const isReddit = redditAdapter.matches(frameUrl);
     const videos: HTMLVideoElement[] = [];
     const images: HTMLImageElement[] = [];
-    collect(doc, videos, images);
+    const elements: Element[] | undefined = isReddit ? [] : undefined;
+    collect(doc, videos, images, elements);
     if (running) for (const v of videos) wire(v);
     const gifs = new Map<string, VideoSource>();
     for (const img of images) {
@@ -233,6 +339,11 @@ export function createDomDetector(opts: DomDetectorOptions): DomDetector {
       if (gifs.has(url)) continue;
       const gif = describeGif(img, url);
       if (gif) gifs.set(url, gif);
+    }
+    if (elements) {
+      const reddit = scanReddit(elements, videos, frameUrl);
+      const unowned = videos.filter((v) => !reddit.owned.has(v));
+      return [...reddit.sources, ...unowned.map(describe), ...gifs.values()];
     }
     return [...videos.map(describe), ...gifs.values()];
   }
