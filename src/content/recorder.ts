@@ -29,7 +29,8 @@ export interface CapturableVideo {
   play?(): Promise<void>;
   /** HTMLMediaElement.readyState; below 3 the video is waiting for data. */
   readyState?: number;
-  captureStream(): unknown;
+  captureStream?(): unknown;
+  mozCaptureStream?(): unknown;
   addEventListener(type: string, fn: () => void): void;
   removeEventListener(type: string, fn: () => void): void;
 }
@@ -70,7 +71,13 @@ async function ensurePlaying(video: CapturableVideo): Promise<boolean> {
 
 export async function recordVideo(video: CapturableVideo, opts: RecordOptions): Promise<Recorded> {
   const Recorder = opts.Recorder ?? (globalThis as { MediaRecorder?: RecorderCtor }).MediaRecorder;
-  if (!Recorder || typeof video.captureStream !== 'function')
+  const capture =
+    typeof video.captureStream === 'function'
+      ? () => video.captureStream!()
+      : typeof video.mozCaptureStream === 'function'
+        ? () => video.mozCaptureStream!()
+        : undefined;
+  if (!Recorder || !capture)
     return Promise.reject(
       new FrameSnapError('unsupported', 'this browser cannot record the video'),
     );
@@ -81,7 +88,7 @@ export async function recordVideo(video: CapturableVideo, opts: RecordOptions): 
     let rec: RecorderLike;
     try {
       const mimeType = PREFERRED.find((t) => Recorder.isTypeSupported(t));
-      rec = new Recorder(video.captureStream(), mimeType ? { mimeType } : undefined);
+      rec = new Recorder(capture(), mimeType ? { mimeType } : undefined);
     } catch (err) {
       reject(
         new FrameSnapError(

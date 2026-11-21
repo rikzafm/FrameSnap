@@ -14,6 +14,7 @@ requests go only to the hosts of the media the user chose (spec section 8).
 - `clipboardWrite`: copies a snapped frame to the clipboard when "Copy to clipboard" is on. It is needed because the keyboard shortcut and the timed burst snap without a click in the page, and a browser only lets a page write to the clipboard without one when this permission is granted (ticket 16).
 - `alarms`: a daily cleanup that deletes partial downloads older than 7 days and trims storage.
 - `declarativeNetRequestWithHostAccess`: adds a temporary session rule that sets the request headers a site needs (such as Referer or Origin) on the requests for a video the user chose, for hosts that refuse a bare request. The rule covers only that video's hosts and is removed when the download ends.
+- `contextMenus`: adds a "Download with FrameSnap" item to the right-click menu when clicking on videos or GIFs.
 
 ## Hosts and content scripts
 

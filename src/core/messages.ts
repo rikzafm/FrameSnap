@@ -60,7 +60,8 @@ export type WorkerToContent =
   | { t: "capture/start"; jobId: string; kind: CaptureKind; elementKey: string; streamId?: string; durationSec?: number }
   | { t: "capture/cancel"; jobId: string }
   /** The saved file's blob: URL can be freed. */
-  | { t: "capture/revoke"; url: string };
+  | { t: "capture/revoke"; url: string }
+  | { t: "context/target" };
 
 export type CaptureKind = "mse-capture" | "recorder";
 
@@ -79,7 +80,8 @@ export type ContentToWorker =
   | { t: "net/tap"; payload: unknown; frameUrl: string }
   | { t: "capture/progress"; jobId: string; ratio: number }
   | { t: "capture/result"; jobId: string; url: string; bytes: number; mime: string; container: "mp4" | "webm"; hasAudio: boolean }
-  | { t: "capture/error"; jobId: string; error: AppError };
+  | { t: "capture/error"; jobId: string; error: AppError }
+  | { t: "context/target-report"; source?: VideoSource };
 
 export type CaptureEvent = Extract<ContentToWorker, { t: "capture/progress" | "capture/result" | "capture/error" }>;
 
@@ -187,6 +189,7 @@ export function isWorkerToContent(x: unknown): x is WorkerToContent {
     case "dom/scan":
     case "picker/cancel":
     case "snap/burst-stop":
+    case "context/target":
       return true;
     case "snap/capture":
       return isSnapOptions(x.options) && (x.elementKey === undefined || typeof x.elementKey === "string");
@@ -242,6 +245,8 @@ export function isContentToWorker(x: unknown): x is ContentToWorker {
       return str(x.jobId) && isObj(x.error) && typeof x.error.code === "string";
     case "demo/pong":
       return str(x.nonce) && typeof x.reply === "string";
+    case "context/target-report":
+      return x.source === undefined || isVideoSource(x.source);
     default:
       return false;
   }

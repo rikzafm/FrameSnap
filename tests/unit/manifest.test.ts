@@ -20,6 +20,7 @@ describe('manifest', () => {
         'clipboardWrite',
         'alarms',
         'declarativeNetRequestWithHostAccess',
+        'contextMenus',
       ].sort(),
     );
   });
@@ -65,5 +66,52 @@ describe('manifest', () => {
       '16': 'icons/icon-16.png',
       '32': 'icons/icon-32.png',
     });
+  });
+});
+
+describe('manifest (firefox)', () => {
+  const ff = buildManifest('firefox');
+
+  it('uses background.scripts and options_ui in a tab, without offscreen permission', () => {
+    expect(ff.manifest_version).toBe(3);
+    expect(ff.background).toEqual({ scripts: ['src/background/index.ts'] });
+    expect('options_page' in ff).toBe(false);
+    expect(ff).toMatchObject({
+      options_ui: { page: 'src/options/index.html', open_in_tab: true },
+    });
+    expect(ff.permissions).not.toContain('offscreen');
+    expect([...ff.permissions].sort()).toEqual(
+      [
+        'activeTab',
+        'scripting',
+        'downloads',
+        'storage',
+        'webRequest',
+        'clipboardWrite',
+        'alarms',
+        'declarativeNetRequestWithHostAccess',
+        'contextMenus',
+      ].sort(),
+    );
+  });
+
+  it('declares browser_specific_settings.gecko with data_collection_permissions', () => {
+    expect(ff).toMatchObject({
+      browser_specific_settings: {
+        gecko: {
+          id: 'frame-snap@framesnap.app',
+          strict_min_version: '128.0',
+          data_collection_permissions: { required: ['none'] },
+        },
+      },
+    });
+  });
+
+  it('keeps the same host permissions, commands and CSP as Chrome', () => {
+    const chrome = buildManifest('chrome');
+    expect(ff.host_permissions).toEqual(chrome.host_permissions);
+    expect(ff.optional_host_permissions).toEqual(chrome.optional_host_permissions);
+    expect(ff.commands).toEqual(chrome.commands);
+    expect(ff.content_security_policy).toEqual(chrome.content_security_policy);
   });
 });

@@ -1,4 +1,5 @@
 import { isWorkerToContent, type ContentToWorker } from "../core/messages";
+import type { VideoSource } from "../core/model";
 import type { DomDetector } from "./dom-detect";
 import type { Picker } from "./picker";
 import type { Snapper } from "./snap";
@@ -6,11 +7,20 @@ import type { Snapper } from "./snap";
 /** Synchronous reply to a service-worker message, or undefined when it is not ours. */
 const frameUrlOf = (u: string | (() => string)): string => (typeof u === "function" ? u() : u);
 
-export function handleWorkerMessage(raw: unknown, detector: DomDetector, frameUrlOrGet: string | (() => string), picker?: Picker, snapper?: Snapper): ContentToWorker | undefined {
+export function handleWorkerMessage(
+  raw: unknown,
+  detector: DomDetector,
+  frameUrlOrGet: string | (() => string),
+  picker?: Picker,
+  snapper?: Snapper,
+  getContextTarget?: () => VideoSource | undefined,
+): ContentToWorker | undefined {
   if (!isWorkerToContent(raw)) return undefined;
   switch (raw.t) {
     case "dom/scan":
       return { t: "dom/report", sources: detector.scan(), frameUrl: frameUrlOf(frameUrlOrGet) };
+    case "context/target":
+      return { t: "context/target-report", source: getContextTarget?.() };
     case "demo/ping":
       return { t: "demo/pong", nonce: raw.nonce, reply: `content:${new URL(frameUrlOf(frameUrlOrGet)).hostname}` };
     case "picker/start":

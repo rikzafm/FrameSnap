@@ -23,8 +23,20 @@ async function dir(parent: FileSystemDirectoryHandle, name: string, create: bool
   }
 }
 
+async function writeHandle(fh: FileSystemFileHandle, data: Uint8Array): Promise<void> {
+  const w = await fh.createWritable({ keepExistingData: false });
+  try {
+    await w.write(data as Uint8Array<ArrayBuffer>);
+    await w.close();
+  } catch (err) {
+    await w.abort().catch(() => undefined);
+    throw err;
+  }
+}
+
 export class OpfsChunkStore implements ChunkStore {
   private rootPromise?: Promise<FileSystemDirectoryHandle>;
+  private canMove?: boolean;
 
   private root(): Promise<FileSystemDirectoryHandle> {
     this.rootPromise ??= navigator.storage.getDirectory().then((r) => r.getDirectoryHandle("jobs", { create: true }));
@@ -48,21 +60,31 @@ export class OpfsChunkStore implements ChunkStore {
 
   async write(jobId: string, trackId: string, key: string, data: Uint8Array): Promise<void> {
     const t = (await this.track(jobId, trackId, true))!;
-    const partName = key + PART;
-    const fh = await t.getFileHandle(partName, { create: true });
-    try {
-      const w = await fh.createWritable({ keepExistingData: false });
-      try {
-        await w.write(data as Uint8Array<ArrayBuffer>);
-        await w.close();
-      } catch (err) {
-        await w.abort().catch(() => undefined);
-        throw err;
+    if (this.canMove !== false) {
+      const partName = key + PART;
+      const fh = await t.getFileHandle(partName, { create: true });
+      if (typeof (fh as { move?: unknown }).move !== "function") {
+        this.canMove = false;
+        await t.removeEntry(partName).catch(() => undefined);
+      } else {
+        this.canMove = true;
+        try {
+          await writeHandle(fh, data);
+          await t.removeEntry(key).catch(() => undefined); // re-writing a chunk replaces it
+          await (fh as FileSystemFileHandle & { move(name: string): Promise<void> }).move(key);
+        } catch (err) {
+          await t.removeEntry(partName).catch(() => undefined);
+          throw err;
+        }
+        return;
       }
-      await t.removeEntry(key).catch(() => undefined); // re-writing a chunk replaces it
-      await (fh as FileSystemFileHandle & { move(name: string): Promise<void> }).move(key);
+    }
+    // Firefox lacks FileSystemFileHandle.move(); createWritable() stages writes until close().
+    const fh = await t.getFileHandle(key, { create: true });
+    try {
+      await writeHandle(fh, data);
     } catch (err) {
-      await t.removeEntry(partName).catch(() => undefined);
+      await t.removeEntry(key).catch(() => undefined);
       throw err;
     }
   }

@@ -55,6 +55,8 @@ export const scripting = {
 };
 
 export const offscreen = {
+  supported: () =>
+    typeof chrome !== 'undefined' && typeof chrome.offscreen?.createDocument === 'function',
   async has(): Promise<boolean> {
     const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] });
     return contexts.length > 0;
@@ -82,4 +84,20 @@ export const permissions = {
   onAdded: chrome.permissions.onAdded,
   onRemoved: chrome.permissions.onRemoved,
   remove: (p: chrome.permissions.Permissions) => chrome.permissions.remove(p),
+};
+
+export const contextMenus = {
+  create: (props: chrome.contextMenus.CreateProperties) =>
+    new Promise<void>((resolve, reject) => {
+      chrome.contextMenus.create(props, () => {
+        const err = chrome.runtime.lastError;
+        if (err) reject(new Error(err.message));
+        else resolve();
+      });
+    }),
+  removeAll: () =>
+    new Promise<void>((resolve) => {
+      chrome.contextMenus.removeAll(() => resolve());
+    }),
+  onClicked: chrome.contextMenus.onClicked,
 };

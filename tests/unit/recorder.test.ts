@@ -121,4 +121,26 @@ describe("recordVideo (MediaRecorder fallback)", () => {
     await settled;
     expect(FakeRecorder.last!.state).toBe("inactive");
   });
+
+  it("falls back to mozCaptureStream when captureStream is unavailable (Firefox)", async () => {
+    const base = fakeVideo();
+    const mozCaptureStream = vi.fn(() => ({ getTracks: () => [] }));
+    const firefoxVideo = {
+      paused: base.paused,
+      ended: base.ended,
+      currentTime: base.currentTime,
+      duration: base.duration,
+      mozCaptureStream,
+      addEventListener: base.addEventListener,
+      removeEventListener: base.removeEventListener,
+    };
+    const p = recordVideo(firefoxVideo as never, {
+      durationSec: 1,
+      Recorder: FakeRecorder as unknown as RecorderCtor,
+    });
+    await vi.advanceTimersByTimeAsync(1_300);
+    const out = await p;
+    expect(mozCaptureStream).toHaveBeenCalledOnce();
+    expect(out.blob.size).toBeGreaterThan(0);
+  });
 });

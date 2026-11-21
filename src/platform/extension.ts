@@ -37,6 +37,9 @@ export const lifecycle = {
   onInstalled(listener: (reason: string) => void): void {
     chrome.runtime.onInstalled.addListener((details) => listener(details.reason));
   },
+  onStartup(listener: () => void): void {
+    chrome.runtime.onStartup.addListener(listener);
+  },
   openOptionsPage: (): Promise<void> => chrome.runtime.openOptionsPage(),
   openPopup: (): Promise<void> => chrome.action.openPopup(),
 };

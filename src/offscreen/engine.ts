@@ -41,6 +41,11 @@ export class Engine {
     this.backend.terminate();
   }
 
+  /** Terminate any running ffmpeg worker so the engine can be recreated cleanly later. */
+  dispose(): void {
+    this.kill();
+  }
+
   /** Serialise work; a failed or cancelled job never blocks the next one. */
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
     const next = this.queue.then(work, work);

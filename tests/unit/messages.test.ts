@@ -63,4 +63,11 @@ describe("message guards", () => {
     expect(isContentToWorker({ t: "picker/action", action: "nuke", source })).toBe(false);
     expect(isContentToWorker({ t: "picker/action", action: "gif" })).toBe(false);
   });
+
+  it("validates context target messages", () => {
+    expect(isWorkerToContent({ t: "context/target" })).toBe(true);
+    expect(isContentToWorker({ t: "context/target-report" })).toBe(true);
+    expect(isContentToWorker({ t: "context/target-report", source })).toBe(true);
+    expect(isContentToWorker({ t: "context/target-report", source: 42 })).toBe(false);
+  });
 });

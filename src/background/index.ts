@@ -3,19 +3,21 @@ import { PICKER_SELECTION_KEY } from "../core/picker-selection";
 import { toAppError } from "../core/errors";
 import { isContentToWorker, isPopupToWorker, type ContentToWorker, type JobEvent, type WorkerToPopup } from "../core/messages";
 import type { JobRecord } from "../core/jobs/job";
-import type { OutputFormat, VideoSource } from "../core/model";
+import { isGifImage, type OutputFormat, type VideoSource } from "../core/model";
 import { parseMaster, parseMedia } from "../core/media/hls";
 import { parseMpd } from "../core/media/dash";
 import { ENGINE_PORT, parsePopupPortName } from "../platform/ports";
-import { alarms, downloads, dnr, offscreen, permissions, runtime, scripting, session, storage, tabs, webRequest } from "../platform/chrome";
+import { alarms, contextMenus, downloads, dnr, offscreen, permissions, runtime, scripting, session, storage, tabs, webRequest } from "../platform/chrome";
 import mseHookFile from "../main-world/mse-main?script";
 import { lifecycle as lifecycleEvents, manifest } from "../platform/extension";
 import { grantedOptionalOrigins, syncMseScripts } from "../platform/mse-scripts";
 import { resolveDefaultQuality } from "../core/settings";
 import { settingsStore } from "../platform/settings-store";
+import { createContextMenuService } from "./context-menu";
 import { createDownloadOrchestrator } from "./download";
 import { createEngineLifecycle } from "./engine-lifecycle";
 import { createEngineLink } from "./engine-link";
+import { createLocalEngine } from "./local-engine";
 import { fetchText } from "./fetch-text";
 import { createPostJson } from "./post-json";
 import { createHistoryStore } from "./history";
@@ -76,14 +78,23 @@ const broadcast = (m: WorkerToPopup) => {
 
 const emitJob = (event: JobEvent) => broadcast({ t: "job/event", event });
 
-const lifecycle = createEngineLifecycle({ api: offscreen, url: "src/offscreen/index.html" });
-const engineLink = createEngineLink({ ensure: () => lifecycle.ensure() });
+const useOffscreen = offscreen.supported();
+const lifecycle = useOffscreen ? createEngineLifecycle({ api: offscreen, url: "src/offscreen/index.html" }) : undefined;
+const engineLink = useOffscreen ? createEngineLink({ ensure: () => lifecycle!.ensure() }) : undefined;
+const localEngine = useOffscreen
+  ? undefined
+  : createLocalEngine({
+      createHost: async (send) => (await import("../offscreen/browser-host")).createBrowserEngineHost(send),
+      onMessage: (m) => void orchestrator.onEngineMessage(m),
+    });
+const activeLifecycle = lifecycle ?? localEngine!.lifecycle;
+const activeEngine = engineLink ?? localEngine!.engine;
 const history = createHistoryStore(storage.local);
 
 const orchestrator = createDownloadOrchestrator({
   jobs: jobStore,
-  engine: engineLink,
-  lifecycle,
+  engine: activeEngine,
+  lifecycle: activeLifecycle,
   downloads,
   dnr,
   fetch: (url, init) => fetch(url, init),
@@ -137,15 +148,46 @@ void (async () => {
   await orchestrator.sweep();
 })().catch(() => undefined);
 
+const contextMenu = createContextMenuService({
+  api: contextMenus,
+  listSources: (tabId) => registry.list(tabId),
+  refreshSources: (tabId) => media.refresh(tabId),
+  getContextTarget: async (tabId, frameId) => {
+    const res = await tabs.sendMessage(tabId, { t: "context/target" }, frameId).catch(() => undefined);
+    return isContentToWorker(res) && res.t === "context/target-report" ? res.source : undefined;
+  },
+  startDownload: (tabId, source, format) =>
+    startPickedDownload(tabId, source, format).catch((err: unknown) =>
+      emitJob({ t: "failed", jobId: crypto.randomUUID(), error: toAppError(err), resumable: false, keptRatio: 0 }),
+    ),
+});
+contextMenus.onClicked.addListener((info, tab) => void contextMenu.onClicked(info, tab).catch(() => undefined));
+
 // First run: the options page opens with the use notice and privacy summary.
 lifecycleEvents.onInstalled((reason) => {
+  void contextMenu.register().catch(() => undefined);
   if (reason === "install") void lifecycleEvents.openOptionsPage().catch(() => undefined);
 });
+lifecycleEvents.onStartup(() => {
+  void contextMenu.register().catch(() => undefined);
+});
+
+/** Range fallback when rendering a GIF-backed clip whose duration is unknown. */
+const WHOLE_CLIP_FALLBACK_SECONDS = 3600;
 
 /** Prefer the registry's copy (manifests expanded) over the picker's snapshot. */
 async function startPickedDownload(tabId: number, picked: VideoSource, format?: OutputFormat): Promise<void> {
   const source = (await registry.list(tabId)).find((s) => s.id === picked.id) ?? picked;
   const settings = await settingsStore().get();
+  if (format === "gif" && !isGifImage(source) && !source.gifUrl && source.animatedGif) {
+    await orchestrator.startGifSource(
+      source,
+      { trim: { start: 0, end: source.duration ?? WHOLE_CLIP_FALLBACK_SECONDS }, fps: "source", width: "original", loop: 0, dither: true },
+      settings.filenameTemplate,
+      { autoSave: true },
+    );
+    return;
+  }
   await orchestrator.start(
     source,
     {
@@ -175,6 +217,7 @@ tabs.onRemoved.addListener((tabId) => void media.onRemoved(tabId).catch(() => un
 
 runtime.onConnect.addListener((port) => {
   if (port.name === ENGINE_PORT) {
+    if (!engineLink) return;
     engineLink.attach(port);
     port.onMessage.addListener((raw: unknown) => {
       if (isEngineToWorker(raw)) void orchestrator.onEngineMessage(raw);

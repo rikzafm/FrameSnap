@@ -32,6 +32,8 @@ export interface MediaService {
   onTap(tabId: number, payload: unknown): Promise<void>;
   /** A content script's pushed `dom/report`. The sender's frame id replaces the placeholder in each frameRef. */
   onDomReport(tabId: number, frameId: number, sources: readonly VideoSource[]): Promise<void>;
+  /** Scan DOM, run page-level adapter detection and expand manifests. */
+  refresh(tabId: number): Promise<VideoSource[]>;
   /** Cached list first, then a refresh (DOM scan + manifest expansion). */
   openPopup(tabId: number, post: (m: WorkerToPopup) => void): Promise<void>;
 }
@@ -80,6 +82,25 @@ export function createMediaService(deps: MediaServiceDeps): MediaService {
     }
   }
 
+  async function refresh(tabId: number): Promise<VideoSource[]> {
+    const scanned = await deps.scanDom(tabId).catch(() => undefined);
+    if (scanned?.length) await registry.ingest(tabId, scanned);
+    // the page URL alone can name a video (a YouTube watch page): no sniffed hit or tap needed
+    const tab = await deps.getTab(tabId).catch(() => undefined);
+    if (tab?.url) {
+      const finds = pickAdapter(tab.url).detect({
+        pageUrl: tab.url,
+        pageTitle: tab.title ?? "",
+        domVideos: [],
+        network: [],
+        ...(tapped.has(tabId) ? { tapped: tapped.get(tabId)! } : {}),
+      });
+      if (finds.length) await registry.ingest(tabId, finds);
+    }
+    await resolveAll(tabId, await registry.list(tabId));
+    return registry.list(tabId);
+  }
+
   return {
     async onResponse(d) {
       const hit = sniffer.observe(d);
@@ -122,25 +143,12 @@ export function createMediaService(deps: MediaServiceDeps): MediaService {
       tapped.delete(tabId);
       await registry.clear(tabId);
     },
+    refresh,
     async openPopup(tabId, post) {
       const resumable = await resumableFor(tabId);
       post(message(tabId, await registry.list(tabId), resumable));
-      const scanned = await deps.scanDom(tabId).catch(() => undefined);
-      if (scanned?.length) await registry.ingest(tabId, scanned);
-      // the page URL alone can name a video (a YouTube watch page): no sniffed hit or tap needed
-      const tab = await deps.getTab(tabId).catch(() => undefined);
-      if (tab?.url) {
-        const finds = pickAdapter(tab.url).detect({
-          pageUrl: tab.url,
-          pageTitle: tab.title ?? "",
-          domVideos: [],
-          network: [],
-          ...(tapped.has(tabId) ? { tapped: tapped.get(tabId)! } : {}),
-        });
-        if (finds.length) await registry.ingest(tabId, finds);
-      }
-      await resolveAll(tabId, await registry.list(tabId));
-      post(message(tabId, await registry.list(tabId), resumable));
+      const refreshed = await refresh(tabId);
+      post(message(tabId, refreshed, resumable));
     },
   };
 }

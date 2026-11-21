@@ -16,8 +16,23 @@ const YOUTUBE_MATCHES = ['*://*.youtube.com/*'];
 
 const YOUTUBE_HOSTS = ['*://*.youtube.com/*', '*://*.googlevideo.com/*'];
 
-export function buildManifest() {
-  return {
+const BASE_PERMISSIONS = [
+  'activeTab',
+  'scripting',
+  'downloads',
+  'storage',
+  'webRequest',
+  'offscreen',
+  'clipboardWrite',
+  'alarms',
+  'declarativeNetRequestWithHostAccess',
+  'contextMenus',
+];
+
+export type TargetBrowser = 'chrome' | 'firefox';
+
+export function buildManifest(target: TargetBrowser = 'chrome') {
+  const common = {
     manifest_version: 3 as const,
     name: 'Frame Snap',
     version: '0.1.0',
@@ -35,11 +50,6 @@ export function buildManifest() {
         '16': 'icons/icon-16.png',
         '32': 'icons/icon-32.png',
       },
-    },
-    options_page: 'src/options/index.html',
-    background: {
-      service_worker: 'src/background/index.ts',
-      type: 'module' as const,
     },
     content_scripts: [
       {
@@ -74,17 +84,6 @@ export function buildManifest() {
         run_at: 'document_start' as const,
       },
     ],
-    permissions: [
-      'activeTab',
-      'scripting',
-      'downloads',
-      'storage',
-      'webRequest',
-      'offscreen',
-      'clipboardWrite',
-      'alarms',
-      'declarativeNetRequestWithHostAccess',
-    ],
     host_permissions: [...SITE_HOSTS, ...YOUTUBE_HOSTS],
     optional_host_permissions: ['<all_urls>'],
     commands: {
@@ -111,5 +110,33 @@ export function buildManifest() {
     content_security_policy: {
       extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
     },
+  };
+
+  if (target === 'firefox') {
+    return {
+      ...common,
+      options_ui: { page: 'src/options/index.html', open_in_tab: true },
+      background: { scripts: ['src/background/index.ts'] },
+      permissions: BASE_PERMISSIONS.filter((p) => p !== 'offscreen'),
+      browser_specific_settings: {
+        gecko: {
+          id: 'frame-snap@framesnap.app',
+          strict_min_version: '128.0',
+          data_collection_permissions: {
+            required: ['none' as const],
+          },
+        },
+      },
+    };
+  }
+
+  return {
+    ...common,
+    options_page: 'src/options/index.html',
+    background: {
+      service_worker: 'src/background/index.ts',
+      type: 'module' as const,
+    },
+    permissions: [...BASE_PERMISSIONS],
   };
 }

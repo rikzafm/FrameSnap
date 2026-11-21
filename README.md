@@ -1,6 +1,6 @@
 # Frame Snap
 
-A Chrome extension (Manifest V3) that downloads video, makes GIFs and snaps frames. It supports
+A Chrome and Firefox extension (Manifest V3) that downloads video, makes GIFs and snaps frames. It supports
 Reddit, X (Twitter), Discord and YouTube, plus any page with a plain video, and everything runs locally in
 your browser. Licensed GPL-3.0-or-later.
 
@@ -12,13 +12,15 @@ your browser. Licensed GPL-3.0-or-later.
 
 ## Requirements
 
-Node.js 22 or newer and a recent Chrome.
+Node.js 22 or newer and a recent Chrome or Firefox (128 or newer).
 
 ```sh
 npm install
 ```
 
 ## Load unpacked
+
+### Chrome
 
 1. `npm run build` (writes `dist/`).
 2. Open `chrome://extensions`, turn on Developer mode.
@@ -27,10 +29,18 @@ npm install
 
 After a rebuild, press the reload button on the extension card.
 
+### Firefox
+
+1. `npm run build:firefox` (writes `dist-firefox/`).
+2. Open `about:debugging#/runtime/this-firefox`.
+3. Choose **Load Temporary Add-on…** and select `dist-firefox/manifest.json`.
+4. Pin the Frame Snap icon, open a page with a video and click the icon.
+
 ## Packaging
 
-`npm run zip` builds and writes `release/frame-snap-<version>.zip`; `npm run store:assets` makes
-the store images from the logo into `release/store-assets/`.
+`npm run zip` builds and writes `release/frame-snap-<version>.zip` for Chrome; `npm run zip:firefox`
+builds and writes `release/frame-snap-<version>-firefox.zip` for Firefox. `npm run store:assets`
+makes the store images from the logo into `release/store-assets/`.
 
 ## Privacy
 

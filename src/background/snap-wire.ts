@@ -11,6 +11,74 @@ import { createSnapService, type SnapService } from './snap';
 import { createTabRegistry } from './registry';
 
 export const SNAP_COMMAND = 'snap-frame';
+const BLOB_REVOKE_FALLBACK_MS = 60_000;
+
+export interface FrameDownloadDeps {
+  downloads: {
+    download: typeof downloads.download;
+    onChanged: {
+      addListener(fn: (delta: { id: number; state?: { current?: string } }) => void): void;
+      removeListener(fn: (delta: { id: number; state?: { current?: string } }) => void): void;
+    };
+  };
+  fetch?: typeof fetch;
+  urls?: { create(b: Blob): string; revoke(url: string): void };
+  revokeTimeoutMs?: number;
+}
+
+/**
+ * Firefox rejects `data:` URLs in `downloads.download()`, so convert them to
+ * short-lived `blob:` URLs whenever `URL.createObjectURL` is available (true in
+ * Firefox's background page, false in Chrome's service worker).
+ */
+export async function downloadFrameUrl(
+  url: string,
+  filename: string,
+  deps: FrameDownloadDeps,
+): Promise<number> {
+  const canBlob =
+    url.startsWith('data:') &&
+    (deps.urls !== undefined ||
+      (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'));
+  if (!canBlob) {
+    return deps.downloads.download({ url, filename, conflictAction: 'uniquify', saveAs: false });
+  }
+  const doFetch = deps.fetch ?? fetch;
+  const urls = deps.urls ?? {
+    create: (b: Blob) => URL.createObjectURL(b),
+    revoke: (u: string) => URL.revokeObjectURL(u),
+  };
+  const blob = await (await doFetch(url)).blob();
+  const blobUrl = urls.create(blob);
+  let cleaned = false;
+  let id: number | undefined;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    clearTimeout(timer);
+    deps.downloads.onChanged.removeListener(onChanged);
+    urls.revoke(blobUrl);
+  };
+  const onChanged = (delta: { id: number; state?: { current?: string } }) => {
+    if (delta.id !== id) return;
+    const s = delta.state?.current;
+    if (s === 'complete' || s === 'interrupted') cleanup();
+  };
+  deps.downloads.onChanged.addListener(onChanged);
+  const timer = setTimeout(cleanup, deps.revokeTimeoutMs ?? BLOB_REVOKE_FALLBACK_MS);
+  try {
+    id = await deps.downloads.download({
+      url: blobUrl,
+      filename,
+      conflictAction: 'uniquify',
+      saveAs: false,
+    });
+    return id;
+  } catch (err) {
+    cleanup();
+    throw err;
+  }
+}
 
 function toBase64(bytes: Uint8Array): string {
   let bin = '';
@@ -31,8 +99,7 @@ export function createChromeSnapService(
       options: normalizeSnapOptions((await storage.local.get(SNAP_PREFS_KEY))[SNAP_PREFS_KEY]),
       template: (await settingsStore().get()).filenameTemplate,
     }),
-    download: (url, filename) =>
-      downloads.download({ url, filename, conflictAction: 'uniquify', saveAs: false }),
+    download: (url, filename) => downloadFrameUrl(url, filename, { downloads }),
     captureVisibleTab: async (tabId) => {
       const tab = await tabs.get(tabId);
       return capture.visibleTab(tab.windowId);

@@ -84,9 +84,11 @@ if (process.argv[1] && /[\\/]zip\.ts$/.test(process.argv[1])) {
   const dir = resolve(process.argv[2] ?? 'dist');
   const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')) as {
     version: string;
+    browser_specific_settings?: { gecko?: unknown };
   };
+  const suffix = manifest.browser_specific_settings?.gecko ? '-firefox' : '';
   const out = resolve(
-    process.argv[3] ?? join(root, 'release', `frame-snap-${manifest.version}.zip`),
+    process.argv[3] ?? join(root, 'release', `frame-snap-${manifest.version}${suffix}.zip`),
   );
   mkdirSync(dirname(out), { recursive: true });
   const files = collectFiles(dir);

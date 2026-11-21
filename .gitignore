@@ -3,6 +3,7 @@
 .agents/
 node_modules/
 dist/
+dist-firefox/
 coverage/
 tests/browser/__screenshots__/
 release/

@@ -152,6 +152,13 @@ describe("media service", () => {
     expect(broken.posted).toHaveLength(2);
   });
 
+  it("refresh scans DOM, runs adapter detection and expands manifests", async () => {
+    const t = setup(files, []);
+    await t.service.onResponse(hlsResponse(fx.MASTER_URL));
+    const refreshed = await t.service.refresh(5);
+    expect(refreshed[0]!.variants.map((v) => v.height)).toEqual([720, 360]);
+  });
+
   it("clears the registry on top-frame navigation", async () => {
     const t = setup(files, []);
     await t.service.onResponse(hlsResponse(fx.MASTER_URL));

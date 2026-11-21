@@ -3,12 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Chrome extension for downloading video, making GIFs and snapping frames",
+  "description": "Browser extension (Chrome and Firefox) for downloading video, making GIFs and snapping frames",
   "license": "GPL-3.0-or-later",
   "scripts": {
     "dev": "vite",
+    "dev:firefox": "vite --mode firefox",
     "icons": "tsx scripts/build-icons.ts",
     "build": "npm run icons && vite build",
+    "build:firefox": "npm run icons && vite build --mode firefox",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -19,6 +21,7 @@
     "test:watch": "vitest",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "zip": "npm run build && tsx scripts/zip.ts dist",
+    "zip:firefox": "npm run build:firefox && tsx scripts/zip.ts dist-firefox",
     "store:assets": "tsx scripts/store-assets.ts"
   },
   "devDependencies": {

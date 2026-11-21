@@ -128,4 +128,26 @@ describe("GIF job", () => {
     await h.until(() => h.events.some((e) => e.t === "failed" && e.jobId === jobId));
     expect(h.orch.pendingGifs()).toEqual([]);
   });
+
+  it("autoSave downloads the rendered GIF immediately without waiting for saveGif or emitting gif-ready", async () => {
+    const src = progressive("a", { duration: 20 }, { width: 1920, height: 1080 });
+    const h = createHarness({ sources: [src] });
+    h.cdn.put("/a.mp4", { body: bytes(10 * KB), etag: '"e"' });
+
+    const jobId = await h.orch.startGifSource(src, gif(), "{title}", { autoSave: true });
+    await h.until(() => h.saved.length === 1 || h.events.some((e) => e.t === "failed" && e.jobId === jobId));
+
+    expect(ready(h, jobId)).toBeUndefined();
+    expect(h.orch.pendingGifs()).toEqual([]);
+    expect(h.saved).toHaveLength(1);
+    expect(h.saved[0]).toMatchObject({ filename: "Clip a.gif" });
+    const blobUrl = h.saved[0]!.url;
+
+    h.complete(h.saved[0]!.id);
+    await h.until(() => h.events.some((e) => e.t === "done" && e.jobId === jobId));
+    expect(h.events.find((e) => e.t === "done")).toMatchObject({ filename: "Clip a.gif" });
+    expect(h.history[0]).toMatchObject({ id: jobId, kind: "gif", filename: "Clip a.gif" });
+    expect(h.blobs.has(blobUrl)).toBe(false);
+    expect((await h.store.list(jobId, "0")).size).toBe(0);
+  });
 });

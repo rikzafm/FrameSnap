@@ -129,10 +129,11 @@ export interface DownloadOrchestrator {
   start(source: VideoSource, options: DownloadOptions, ctx?: { tabId?: number }): Promise<string>;
   /**
    * Fetch just a time range, render it as a GIF and keep the result for preview (`gif-ready`).
-   * Nothing is saved until `saveGif`; `cancel` discards it.
+   * Nothing is saved until `saveGif`; `cancel` discards it. When `autoSave` is set, the
+   * rendered GIF is saved immediately without waiting for `saveGif`.
    */
   startGif(req: { tabId: number; sourceId: string; options: GifOptions; filenameTemplate?: string }): Promise<string>;
-  startGifSource(source: VideoSource, options: GifOptions, filenameTemplate?: string): Promise<string>;
+  startGifSource(source: VideoSource, options: GifOptions, filenameTemplate?: string, opts?: { autoSave?: boolean }): Promise<string>;
   /** Save a GIF that is waiting in preview. */
   saveGif(jobId: string): Promise<void>;
   /** GIFs rendered and waiting for Save or Discard, for a popup that just opened. */
@@ -192,6 +193,8 @@ interface Active {
   seeks?: (Seek | undefined)[];
   /** Set for GIF jobs: what to render and the pixel size of the fetched rendition. */
   gif?: { options: GifOptions; src: { width: number; height: number } };
+  /** Save the rendered GIF at once instead of holding it in preview for `saveGif`. */
+  gifAutoSave?: boolean;
   /** The GIF is rendered and waits in preview (the blob stays in the offscreen document). */
   gifReady: boolean;
 }
@@ -682,7 +685,7 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
         }
         a.blobUrl = m.url;
         a.blobBytes = m.bytes;
-        if (a.gif) {
+        if (a.gif && !a.gifAutoSave) {
           // preview first: the file is saved only when the user says so
           a.gifReady = true;
           await update(a.id, (j) => enterPhase(j, "save", now()));
@@ -719,6 +722,7 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     options: DownloadOptions,
     ctx: { tabId?: number } = {},
     gifRequest?: GifOptions,
+    gifAutoSave?: boolean,
   ): Promise<string> {
     let plan: DownloadPlan;
     let gif: Active["gif"];
@@ -759,6 +763,7 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
       finalized: false,
       directResumes: 0,
       gif,
+      gifAutoSave: Boolean(gifRequest && gifAutoSave),
       gifReady: false,
       ...(ctx.tabId !== undefined ? { home: { tabId: ctx.tabId, frameId: source.frameRef?.frameId ?? 0 } } : {}),
     };
@@ -1015,7 +1020,7 @@ export function createDownloadOrchestrator(deps: DownloadDeps): DownloadOrchestr
     recover,
     sweep,
 
-    startGifSource: (source, options, template) => startJob(source, gifTemplate(template), {}, options),
+    startGifSource: (source, options, template, opts) => startJob(source, gifTemplate(template), {}, options, opts?.autoSave),
 
     async startGif({ tabId, sourceId, options, filenameTemplate }) {
       const source = await deps.lookupSource(tabId, sourceId);

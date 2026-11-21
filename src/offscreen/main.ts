@@ -1,36 +1,17 @@
 /** Offscreen document entry: connects the engine host to the service worker over the "engine" port. */
 import { isWorkerToEngine } from '../core/engine-messages';
-import { MemoryChunkStore } from '../core/jobs/store';
 import { ENGINE_PORT, connectWithReconnect, type PortLike } from '../platform/ports';
-import { Engine } from './engine';
-import { FfmpegWasmBackend } from './ffmpeg-backend';
-import { createEngineHost } from './host';
-import { OpfsChunkStore } from './opfs-chunk-store';
+import { createBrowserEngineHost } from './browser-host';
 
-let opfs: OpfsChunkStore | undefined;
 /** The live port. Set inside onConnect, which connectWithReconnect runs before it returns. */
 let current: PortLike | undefined;
 
-const host = createEngineHost({
-  send: (m) => {
-    try {
-      current?.postMessage(m);
-    } catch {
-      // the worker went away; the reconnect announces state again
-    }
-  },
-  opfs: () => {
-    if (!navigator.storage?.getDirectory) throw new Error('OPFS unavailable');
-    return (opfs ??= new OpfsChunkStore());
-  },
-  memory: new MemoryChunkStore(),
-  engine: new Engine(new FfmpegWasmBackend()),
-  http: (url, init) => fetch(url, init),
-  blobUrls: { create: (b) => URL.createObjectURL(b), revoke: (u) => URL.revokeObjectURL(u) },
-  storage: {
-    persist: () => navigator.storage.persist(),
-    estimate: () => navigator.storage.estimate(),
-  },
+const { host } = createBrowserEngineHost((m) => {
+  try {
+    current?.postMessage(m);
+  } catch {
+    // the worker went away; the reconnect announces state again
+  }
 });
 
 connectWithReconnect({
